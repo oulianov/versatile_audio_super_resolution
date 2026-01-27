@@ -1,9 +1,18 @@
 #!/usr/bin/python3
-import os
-import torch
-import logging
-from audiosr import super_resolution, super_resolution_long_audio, build_model, save_wave, get_time, read_list
 import argparse
+import logging
+import os
+
+import torch
+
+from audiosr import (
+    build_model,
+    get_time,
+    read_list,
+    save_wave,
+    super_resolution,
+    super_resolution_long_audio,
+)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 matplotlib_logger = logging.getLogger('matplotlib')

@@ -4,11 +4,12 @@ Demo script to show the effect of energy scaling on LSD calculation.
 Compares LSD values with and without energy unification.
 """
 
-import numpy as np
-import librosa
-import torch
-import matplotlib.pyplot as plt
 from pathlib import Path
+
+import librosa
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
 
 # Constants
 EPS = 1e-8
@@ -102,7 +103,7 @@ def main():
     gt_lower_energy = np.mean(mag1[:num_lower_bins, :])
     selected_lower_energy = np.mean(mag2[:num_lower_bins, :])
     
-    print(f"\nEnergy Analysis:")
+    print("\nEnergy Analysis:")
     print(f"GT lower frequency energy: {gt_lower_energy:.6f}")
     print(f"Selected lower frequency energy: {selected_lower_energy:.6f}")
     print(f"Energy ratio (selected/gt): {selected_lower_energy/gt_lower_energy:.4f}")

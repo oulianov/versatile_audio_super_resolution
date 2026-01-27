@@ -1,13 +1,14 @@
+import json
+import logging
+import os
+import pathlib
+import random
+
 import numpy as np
 import torch
 from torch import nn as nn
 from torchvision.ops.misc import FrozenBatchNorm2d
-import logging
 from tqdm import tqdm
-import random
-import json
-import os
-import pathlib
 
 # TODO: (yusong) this not a good place to store those information and does not scale. Need to be fixed later.
 dataset_split = {

@@ -1,20 +1,21 @@
+import argparse
 import gc
 import os
 import random
+import tempfile
+import warnings
+
+import librosa
 import numpy as np
-from scipy.signal.windows import hann
+import pyloudnorm as pyln
 import soundfile as sf
 import torch
 from cog import BasePredictor, Input, Path
-import tempfile
-import argparse
-import librosa
-from audiosr import build_model, super_resolution
 from scipy import signal
-import pyloudnorm as pyln
+from scipy.signal.windows import hann
 
+from audiosr import build_model, super_resolution
 
-import warnings
 warnings.filterwarnings("ignore")
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"

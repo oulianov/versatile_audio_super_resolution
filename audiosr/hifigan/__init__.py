@@ -1,5 +1,5 @@
-from .models_v2 import Generator
 from .models import Generator as Generator_old
+from .models_v2 import Generator
 
 
 class AttrDict(dict):

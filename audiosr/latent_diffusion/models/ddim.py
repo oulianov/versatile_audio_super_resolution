@@ -1,14 +1,14 @@
 """SAMPLING ONLY."""
 
-import torch
 import numpy as np
+import torch
 from tqdm import tqdm
 
 from audiosr.latent_diffusion.modules.diffusionmodules.util import (
+    extract_into_tensor,
     make_ddim_sampling_parameters,
     make_ddim_timesteps,
     noise_like,
-    extract_into_tensor,
 )
 
 

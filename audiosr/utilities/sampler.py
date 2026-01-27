@@ -1,11 +1,10 @@
-from typing import Iterator, List, Optional, Union
-from collections import Counter
 import logging
-from operator import itemgetter
 import random
+from collections import Counter
+from operator import itemgetter
+from typing import Iterator, List, Optional, Union
 
 import numpy as np
-
 from torch.utils.data import DistributedSampler
 from torch.utils.data.sampler import Sampler
 

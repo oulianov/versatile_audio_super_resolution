@@ -9,12 +9,11 @@
 # --------------------------------------------------------
 
 import os
+
 import PIL
-
-from torchvision import datasets, transforms
-
 from timm.data import create_transform
 from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from torchvision import datasets, transforms
 
 
 def build_dataset(is_train, args):

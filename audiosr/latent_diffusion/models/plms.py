@@ -1,7 +1,7 @@
 """SAMPLING ONLY."""
 
-import torch
 import numpy as np
+import torch
 from tqdm import tqdm
 
 from audiosr.latent_diffusion.modules.diffusionmodules.util import (

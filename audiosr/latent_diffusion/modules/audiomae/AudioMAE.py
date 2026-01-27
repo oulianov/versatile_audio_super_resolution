@@ -5,8 +5,9 @@ Reference Repo: https://github.com/facebookresearch/AudioMAE
 import torch
 import torch.nn as nn
 from timm.models.layers import to_2tuple
-import audiosr.latent_diffusion.modules.audiomae.models_vit as models_vit
+
 import audiosr.latent_diffusion.modules.audiomae.models_mae as models_mae
+import audiosr.latent_diffusion.modules.audiomae.models_vit as models_vit
 
 # model = mae_vit_base_patch16(in_chans=1, audio_exp=True, img_size=(1024, 128))
 

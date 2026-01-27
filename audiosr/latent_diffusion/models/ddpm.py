@@ -1,37 +1,35 @@
-from multiprocessing.sharedctypes import Value
 import os
-import librosa
-import torch
-import torch.nn as nn
-import numpy as np
-from einops import rearrange, repeat
 from contextlib import contextmanager
 from functools import partial
-from tqdm import tqdm
+from multiprocessing.sharedctypes import Value
+
+import librosa
+import numpy as np
+import soundfile as sf
+import torch
+import torch.nn as nn
+from einops import rearrange, repeat
 from torchvision.utils import make_grid
-from audiosr.latent_diffusion.modules.encoders.modules import *
-
-from audiosr.latent_diffusion.util import (
-    exists,
-    default,
-    count_params,
-    instantiate_from_config,
-)
-from audiosr.latent_diffusion.modules.ema import LitEma
-from audiosr.latent_diffusion.modules.distributions.distributions import (
-    DiagonalGaussianDistribution,
-)
-
-from audiosr.latent_diffusion.modules.diffusionmodules.util import (
-    make_beta_schedule,
-    extract_into_tensor,
-    noise_like,
-)
+from tqdm import tqdm
 
 from audiosr.latent_diffusion.models.ddim import DDIMSampler
 from audiosr.latent_diffusion.models.plms import PLMSSampler
-import soundfile as sf
-import os
+from audiosr.latent_diffusion.modules.diffusionmodules.util import (
+    extract_into_tensor,
+    make_beta_schedule,
+    noise_like,
+)
+from audiosr.latent_diffusion.modules.distributions.distributions import (
+    DiagonalGaussianDistribution,
+)
+from audiosr.latent_diffusion.modules.ema import LitEma
+from audiosr.latent_diffusion.modules.encoders.modules import *
+from audiosr.latent_diffusion.util import (
+    count_params,
+    default,
+    exists,
+    instantiate_from_config,
+)
 
 __conditioning_keys__ = {"concat": "c_concat", "crossattn": "c_crossattn", "adm": "y"}
 
@@ -1395,7 +1393,7 @@ class LatentDiffusion(DDPM):
                     "%s.wav"
                     % (
                         os.path.basename(name[i])
-                        if (not ".wav" in name[i])
+                        if (".wav" not in name[i])
                         else os.path.basename(name[i]).split(".")[0]
                     ),
                 )

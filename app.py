@@ -1,10 +1,13 @@
-import gradio as gr
-import numpy as np
-import librosa
-from audiosr import super_resolution, build_model
-import tempfile
-import soundfile as sf
 import os
+import tempfile
+
+import gradio as gr
+import librosa
+import numpy as np
+import soundfile as sf
+
+from audiosr import build_model, super_resolution
+
 
 def detect_audio_end(audio, sr, window_size=2048, hop_length=512, threshold_db=-50):
     """Detect the end of actual audio content using RMS energy"""

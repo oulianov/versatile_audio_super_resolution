@@ -1,9 +1,10 @@
+import numpy as np
 import torch
 import torch.distributed.nn
-from torch import distributed as dist, nn as nn
+from sklearn.metrics import accuracy_score, average_precision_score, roc_auc_score
+from torch import distributed as dist
+from torch import nn as nn
 from torch.nn import functional as F
-import numpy as np
-from sklearn.metrics import average_precision_score, roc_auc_score, accuracy_score
 
 try:
     import horovod.torch as hvd
@@ -366,7 +367,7 @@ class LPMetrics(object):
         elif name == "mauc":
             return get_mauc
         else:
-            raise ValueError(f"the metric should be at least one of [map, acc, mauc]")
+            raise ValueError("the metric should be at least one of [map, acc, mauc]")
 
     def evaluate_mertics(self, pred, target):
         metric_dict = {}
@@ -390,7 +391,7 @@ class LPLoss(nn.Module):
         elif loss_name == "mse":
             self.loss_func = nn.MSELoss()
         else:
-            raise ValueError(f"the loss func should be at least one of [bce, ce, mse]")
+            raise ValueError("the loss func should be at least one of [bce, ce, mse]")
 
     def forward(self, pred, target):
         loss = self.loss_func(pred, target)

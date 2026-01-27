@@ -24,7 +24,6 @@ from audiosr.utils import (
 
 
 def seed_everything(seed):
-    import os
     import random
 
     import numpy as np

@@ -1,19 +1,17 @@
-import torch
 import logging
+
+import numpy as np
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
+import torchaudio
+from transformers import AutoTokenizer, RobertaTokenizer, T5Config, T5EncoderModel
+
 from audiosr.clap.open_clip import create_model
 from audiosr.clap.training.data import get_audio_features
-import torchaudio
-from transformers import RobertaTokenizer, AutoTokenizer, T5EncoderModel
-import torch.nn.functional as F
 from audiosr.latent_diffusion.modules.audiomae.AudioMAE import Vanilla_AudioMAE
 from audiosr.latent_diffusion.modules.phoneme_encoder.encoder import TextEncoder
 from audiosr.latent_diffusion.util import instantiate_from_config
-
-from transformers import AutoTokenizer, T5Config
-
-
-import numpy as np
 
 """
 The model forward function can return three types of data:

@@ -1,23 +1,25 @@
+import io
 import json
 import logging
 import os
 import random
 from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+import soundfile as sf
 import torch
 import torchvision.datasets as datasets
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader, SubsetRandomSampler
+from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 from torch.utils.data.distributed import DistributedSampler
-import soundfile as sf
-import io
-from pathlib import Path
 
 # import wget
-
-from audiosr.clap.open_clip.utils import get_tar_path_from_dataset_name
-from audiosr.clap.open_clip.utils import load_class_label
+from audiosr.clap.open_clip.utils import (
+    get_tar_path_from_dataset_name,
+    load_class_label,
+)
 
 try:
     import horovod.torch as hvd

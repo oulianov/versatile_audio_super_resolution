@@ -1,15 +1,15 @@
 import os
+import random
+
+import numpy as np
 import pandas as pd
+import torch
+import torch.nn.functional
+import torchaudio
+from torch.utils.data import Dataset
 
 import audiosr.utilities.audio as Audio
 from audiosr.utilities.tools import load_json
-
-import random
-from torch.utils.data import Dataset
-import torch.nn.functional
-import torch
-import numpy as np
-import torchaudio
 
 
 class AudioDataset(Dataset):

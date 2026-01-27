@@ -1,20 +1,21 @@
 import contextlib
 import importlib
-from huggingface_hub import hf_hub_download
-import numpy as np
-import torch
-
-from inspect import isfunction
+import json
 import os
 import subprocess
 import tempfile
-import json
-import soundfile as sf
 import time
 import wave
-import torchaudio
+from inspect import isfunction
+
+import numpy as np
 import progressbar
+import soundfile as sf
+import torch
+import torchaudio
+from huggingface_hub import hf_hub_download
 from librosa.filters import mel as librosa_mel_fn
+
 from audiosr.lowpass import lowpass
 
 hann_window = {}
@@ -264,7 +265,9 @@ def get_time():
 
 
 def seed_everything(seed):
-    import random, os
+    import os
+    import random
+
     import numpy as np
     import torch
 
@@ -324,14 +327,14 @@ def save_wave(waveform, inputpath, savepath, name="outwav", samplerate=16000):
         if waveform.shape[0] > 1:
             fname = "%s_%s.wav" % (
                 os.path.basename(name[i])
-                if (not ".wav" in name[i])
+                if (".wav" not in name[i])
                 else os.path.basename(name[i]).split(".")[0],
                 i,
             )
         else:
             fname = (
                 "%s.wav" % os.path.basename(name[i])
-                if (not ".wav" in name[i])
+                if (".wav" not in name[i])
                 else os.path.basename(name[i]).split(".")[0]
             )
             # Avoid the file name too long to be saved
@@ -382,7 +385,7 @@ def get_obj_from_str(string, reload=False):
 
 
 def instantiate_from_config(config):
-    if not "target" in config:
+    if "target" not in config:
         if config == "__is_first_stage__":
             return None
         elif config == "__is_unconditional__":

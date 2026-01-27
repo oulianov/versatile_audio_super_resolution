@@ -8,11 +8,11 @@ os.environ["NUMBA_CACHE_DIR"] = "/tmp/"
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchlibrosa.stft import Spectrogram, LogmelFilterBank
 from torchlibrosa.augmentation import SpecAugmentation
+from torchlibrosa.stft import LogmelFilterBank, Spectrogram
 
+from .feature_fusion import AFF, DAF, iAFF
 from .utils import do_mixup, interpolate
-from .feature_fusion import iAFF, AFF, DAF
 
 
 def init_layer(layer):

@@ -5,25 +5,21 @@
 # below codes are based and referred from https://github.com/microsoft/Swin-Transformer
 # Swin Transformer for Computer Vision: https://arxiv.org/pdf/2103.14030.pdf
 
-import torch
-import torch.nn as nn
-from itertools import repeat
 import collections.abc
 import math
-import warnings
-
-from torch.nn.init import _calculate_fan_in_and_fan_out
-import torch.utils.checkpoint as checkpoint
-
 import random
-
-from torchlibrosa.stft import Spectrogram, LogmelFilterBank
-from torchlibrosa.augmentation import SpecAugmentation
-
+import warnings
 from itertools import repeat
-from .utils import do_mixup, interpolate
 
-from .feature_fusion import iAFF, AFF, DAF
+import torch
+import torch.nn as nn
+import torch.utils.checkpoint as checkpoint
+from torch.nn.init import _calculate_fan_in_and_fan_out
+from torchlibrosa.augmentation import SpecAugmentation
+from torchlibrosa.stft import LogmelFilterBank, Spectrogram
+
+from .feature_fusion import AFF, DAF, iAFF
+from .utils import do_mixup, interpolate
 
 
 # from PyTorch internals

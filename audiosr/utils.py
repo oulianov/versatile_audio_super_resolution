@@ -448,7 +448,7 @@ def convert_bin_to_safetensors(bin_path, safe_path):
         return False
 
 
-def download_checkpoint(checkpoint_name="basic", use_safetensors=True):
+def download_checkpoint(checkpoint_name="basic", use_safetensors=False):
     model_id = None
     if checkpoint_name == "basic":
         model_id = "haoheliu/audiosr_basic"

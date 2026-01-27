@@ -143,7 +143,7 @@ def round_up_duration(duration):
 
 
 def build_model(
-    ckpt_path=None, config=None, device=None, model_name="basic", use_safetensors=True
+    ckpt_path=None, config=None, device=None, model_name="basic", use_safetensors=False
 ):
     if device is None or device == "auto":
         if torch.cuda.is_available():

@@ -74,9 +74,9 @@ def lowpass_filtering_prepare_inference(dl_output):
     cutoff_freq = (
         _locate_cutoff_freq(dl_output["stft"], percentile=0.985) / 1024
     ) * 24000
-    
+
     # If the audio is almost empty. Give up processing
-    if(cutoff_freq < 1000):
+    if cutoff_freq < 1000:
         cutoff_freq = 24000
 
     order = 8
@@ -113,7 +113,13 @@ def mel_spectrogram_train(y):
     mel_fmax = 24000
 
     if 24000 not in mel_basis:
-        mel = librosa_mel_fn(sr=sampling_rate, n_fft=filter_length, n_mels=n_mel, fmin=mel_fmin, fmax=mel_fmax)
+        mel = librosa_mel_fn(
+            sr=sampling_rate,
+            n_fft=filter_length,
+            n_mels=n_mel,
+            fmin=mel_fmin,
+            fmax=mel_fmax,
+        )
         mel_basis[str(mel_fmax) + "_" + str(y.device)] = (
             torch.from_numpy(mel).float().to(y.device)
         )
@@ -174,8 +180,9 @@ def wav_feature_extraction(waveform, target_frame):
     log_mel_spec = torch.FloatTensor(log_mel_spec.T)
     stft = torch.FloatTensor(stft.T)
 
-    log_mel_spec, stft = pad_spec(log_mel_spec, target_frame), pad_spec(
-        stft, target_frame
+    log_mel_spec, stft = (
+        pad_spec(log_mel_spec, target_frame),
+        pad_spec(stft, target_frame),
     )
     return log_mel_spec, stft
 
@@ -185,14 +192,25 @@ def normalize_wav(waveform):
     waveform = waveform / (np.max(np.abs(waveform)) + 1e-8)
     return waveform * 0.5
 
+
 def read_wav_file(filename):
-    waveform, sr = torchaudio.load(filename)
+    # Use soundfile directly to avoid torchcodec issues in newer torchaudio versions
+    waveform_np, sr = sf.read(filename, dtype="float32")
+    # soundfile returns (samples, channels), convert to (channels, samples) tensor
+    if waveform_np.ndim == 1:
+        waveform = torch.from_numpy(waveform_np).unsqueeze(0)
+    else:
+        waveform = torch.from_numpy(waveform_np.T)
     duration = waveform.size(-1) / sr
 
-    if(duration > 10.24):
-        print("\033[93m {}\033[00m" .format("Warning: audio is longer than 10.24 seconds, may degrade the model performance. It's recommand to truncate your audio to 5.12 seconds before input to AudioSR to get the best performance."))
+    if duration > 10.24:
+        print(
+            "\033[93m {}\033[00m".format(
+                "Warning: audio is longer than 10.24 seconds, may degrade the model performance. It's recommand to truncate your audio to 5.12 seconds before input to AudioSR to get the best performance."
+            )
+        )
 
-    if(duration % 5.12 != 0):
+    if duration % 5.12 != 0:
         pad_duration = duration + (5.12 - duration % 5.12)
     else:
         pad_duration = duration
@@ -210,6 +228,7 @@ def read_wav_file(filename):
     waveform = waveform[None, ...]
     waveform = pad_wav(waveform, target_length=int(48000 * pad_duration))
     return waveform, target_frame, pad_duration
+
 
 def read_audio_file(filename):
     waveform, target_frame, duration = read_wav_file(filename)
@@ -258,31 +277,43 @@ def seed_everything(seed):
     torch.backends.cudnn.benchmark = True
 
 
-
 def strip_silence(orignal_path, input_path, output_path):
-    get_dur = subprocess.run([
-        'ffprobe',
-        '-v', 'error',
-        '-select_streams', 'a:0',
-        '-show_entries', 'format=duration',
-        '-sexagesimal',
-        '-of', 'json',
-        orignal_path
-    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    get_dur = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "format=duration",
+            "-sexagesimal",
+            "-of",
+            "json",
+            orignal_path,
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
-    duration = json.loads(get_dur.stdout)['format']['duration']
-    
-    subprocess.run([
-        'ffmpeg',
-        '-y',
-        '-ss', '00:00:00',
-        '-i', input_path,
-        '-t', duration,
-        '-c', 'copy',
-        output_path
-    ])
+    duration = json.loads(get_dur.stdout)["format"]["duration"]
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-ss",
+            "00:00:00",
+            "-i",
+            input_path,
+            "-t",
+            duration,
+            "-c",
+            "copy",
+            output_path,
+        ]
+    )
     os.remove(input_path)
-
 
 
 def save_wave(waveform, inputpath, savepath, name="outwav", samplerate=16000):
@@ -309,9 +340,13 @@ def save_wave(waveform, inputpath, savepath, name="outwav", samplerate=16000):
 
         save_path = os.path.join(savepath, fname)
         temp_path = os.path.join(tempfile.gettempdir(), fname)
-        print("\033[98m {}\033[00m" .format("Don't forget to try different seeds by setting --seed <int> so that AudioSR can have optimal performance on your hardware."))
+        print(
+            "\033[98m {}\033[00m".format(
+                "Don't forget to try different seeds by setting --seed <int> so that AudioSR can have optimal performance on your hardware."
+            )
+        )
         print("Save audio to %s." % save_path)
-        
+
         # Reshape waveform for soundfile
         data_to_save = waveform[i].T.cpu().numpy()
         if data_to_save.ndim == 1:
@@ -334,7 +369,7 @@ def default(val, d):
 def count_params(model, verbose=False):
     total_params = sum(p.numel() for p in model.parameters())
     if verbose:
-        print(f"{model.__class__.__name__} has {total_params * 1.e-6:.2f} M params.")
+        print(f"{model.__class__.__name__} has {total_params * 1.0e-6:.2f} M params.")
     return total_params
 
 
@@ -387,25 +422,28 @@ def convert_bin_to_safetensors(bin_path, safe_path):
     print(f"Converting {bin_path} to {safe_path}...")
     try:
         import safetensors.torch
+
         checkpoint = torch.load(bin_path, map_location="cpu")
         if "state_dict" in checkpoint:
             state_dict = checkpoint["state_dict"]
         else:
             state_dict = checkpoint
-        
+
         # Ensure all tensors are contiguous
         for k, v in state_dict.items():
             if isinstance(v, torch.Tensor):
                 state_dict[k] = v.contiguous()
-            
+
         safetensors.torch.save_file(state_dict, safe_path)
         print(f"Conversion successful: {safe_path}")
         return True
     except Exception as e:
         print(f"Error converting model: {e}")
         import traceback
+
         traceback.print_exc()
         return False
+
 
 def download_checkpoint(checkpoint_name="basic", use_safetensors=True):
     model_id = None
@@ -415,7 +453,7 @@ def download_checkpoint(checkpoint_name="basic", use_safetensors=True):
         model_id = "haoheliu/audiosr_speech"
     else:
         raise ValueError("Invalid Model Name %s" % checkpoint_name)
-    
+
     if use_safetensors:
         # 1. Try to find local/cached safetensors first or download if available on HF
         try:
@@ -425,8 +463,10 @@ def download_checkpoint(checkpoint_name="basic", use_safetensors=True):
             )
             return checkpoint_path
         except Exception:
-            print(f"Native safetensors not found on HF for {model_id}. Checking local conversion...")
-            
+            print(
+                f"Native safetensors not found on HF for {model_id}. Checking local conversion..."
+            )
+
             # 2. Check if we have a locally converted copy in the HF cache dir structure
             # We'll use the bin file path to determine where to put the safe file
             try:
@@ -434,15 +474,15 @@ def download_checkpoint(checkpoint_name="basic", use_safetensors=True):
                 bin_path = hf_hub_download(
                     repo_id=model_id, filename="pytorch_model.bin"
                 )
-                
+
                 # Construct parallel safetensors path
                 # bin_path usually looks like .../snapshots/<hash>/pytorch_model.bin
                 safe_path = bin_path.replace("pytorch_model.bin", "model.safetensors")
-                
+
                 if os.path.exists(safe_path):
                     print(f"Found locally converted safetensors: {safe_path}")
                     return safe_path
-                
+
                 # 3. Fallback & Convert
                 print(f"Local safetensors not found. Converting {bin_path}...")
                 if convert_bin_to_safetensors(bin_path, safe_path):
@@ -456,9 +496,7 @@ def download_checkpoint(checkpoint_name="basic", use_safetensors=True):
 
     # Final Fallback: Use the binary model directly
     print(f"Using legacy binary model for {model_id}")
-    checkpoint_path = hf_hub_download(
-        repo_id=model_id, filename="pytorch_model.bin"
-    )
+    checkpoint_path = hf_hub_download(repo_id=model_id, filename="pytorch_model.bin")
     return checkpoint_path
 
 

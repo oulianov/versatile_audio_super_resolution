@@ -34,8 +34,6 @@ dependencies = [
     "diffusers",
     "pyinstrument",
     "loguru>=0.7.3",
-    "pyloudnorm>=0.2.0",
-    "torchcodec>=0.10.0",
 ]
 
 

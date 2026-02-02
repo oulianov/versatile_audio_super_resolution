@@ -134,12 +134,8 @@ def mel_spectrogram_train(y):
         )
         hann_window[str(y.device)] = torch.hann_window(win_length).to(y.device)
 
-    # Ensure y is (Batch, 1, Time) for padding
-    if y.ndim == 2:
-        y = y.unsqueeze(1)
-
     y = torch.nn.functional.pad(
-        y,
+        y.unsqueeze(1),
         (int((filter_length - hop_length) / 2), int((filter_length - hop_length) / 2)),
         mode="reflect",
     )

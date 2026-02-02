@@ -833,15 +833,11 @@ class LatentDiffusion(DDPM):
         print(f"DEBUG: get_input start for key={k}")
         x = super().get_input(batch, k)
 
-        print(f"DEBUG: get_input - moving x to {self.device}...")
         x = x.to(self.device)
 
         if return_first_stage_encode:
-            print("DEBUG: get_input - starting encode_first_stage (VAE encoding)...")
             encoder_posterior = self.encode_first_stage(x)
-            print("DEBUG: get_input - getting first stage encoding...")
             z = self.get_first_stage_encoding(encoder_posterior).detach()
-            print("DEBUG: get_input - encode_first_stage finished.")
         else:
             z = None
         cond_dict = {}
@@ -1505,7 +1501,13 @@ class LatentDiffusion(DDPM):
                 self.first_stage_key,
                 unconditional_prob_cfg=0.0,  # Do not output unconditional information in the c
             )
-            print("DEBUG: generate_batch - get_input finished.")
+            print("DEBUG: generate_batch - getting learned conditioning...")
+            c = self.get_learned_conditioning(batch)
+
+            if unconditional_prob_cfg > 0.0:
+                unconditional_conditioning = self.get_learned_conditioning(batch)
+
+            print("DEBUG: generate_batch - preparing cond dict...")
             # Unconditional guidance handling
             # ...
 

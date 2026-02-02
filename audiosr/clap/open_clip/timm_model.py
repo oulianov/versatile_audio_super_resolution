@@ -1,18 +1,19 @@
-""" timm model adapter
+"""timm model adapter
 
 Wraps timm (https://github.com/rwightman/pytorch-image-models) models for use as a vision tower in CLIP model.
 """
+
 from collections import OrderedDict
 
 import torch.nn as nn
 
 try:
     import timm
-    from timm.models.layers import Mlp, to_2tuple
-    from timm.models.layers.attention_pool2d import (
+    from timm.layers import Mlp, to_2tuple
+    from timm.layers import (
         AttentionPool2d as AbsAttentionPool2d,
     )
-    from timm.models.layers.attention_pool2d import RotAttentionPool2d
+    from timm.layers import RotAttentionPool2d
 except ImportError:
     timm = None
 

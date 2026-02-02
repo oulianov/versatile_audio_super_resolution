@@ -156,6 +156,8 @@ def build_model(
             device = torch.device("mps")
         else:
             device = torch.device("cpu")
+    elif isinstance(device, str):
+        device = torch.device(device)
 
     print("Loading AudioSR: %s" % model_name)
     print("Loading model on %s" % device)

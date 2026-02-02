@@ -1461,15 +1461,13 @@ class LatentDiffusion(DDPM):
     def generate_batch(
         self,
         batch,
-        unconditional_guidance_scale=1.0,
         ddim_steps=200,
+        ddim_eta=1.0,
+        x_T=None,
         n_gen=1,
-        use_ddim=True,
-        ddim_eta=0.0,
-        use_plms=False,
-        duration=None,
-        cutoff_freq=None,  # 12000Hz default will be handled in postprocessing if None
+        unconditional_guidance_scale=1.0,
         unconditional_conditioning=None,
+        use_plms=False,
         **kwargs,
     ):
         # Generate n_gen times and select the best
@@ -1536,7 +1534,7 @@ class LatentDiffusion(DDPM):
         )
 
         waveform_lowpass = super().get_input(batch, "waveform_lowpass")
-        waveform = self.postprocessing(waveform, waveform_lowpass, cutoff_freq)
+        waveform = self.postprocessing(waveform, waveform_lowpass)
 
         max_amp = np.max(np.abs(waveform), axis=-1)
         waveform = 0.5 * waveform / max_amp[..., None]
@@ -1567,20 +1565,12 @@ class LatentDiffusion(DDPM):
             samples[i][..., :cutoff_melbin] = input[i][..., :cutoff_melbin]
         return samples
 
-    def postprocessing(self, out_batch, x_batch, cutoff_freq=None):  # x is target
+    def postprocessing(self, out_batch, x_batch):  # x is target
         # Replace the low resolution part with the ground truth
         for i in range(out_batch.shape[0]):
             out = out_batch[i, 0]
             x = x_batch[i, 0].cpu().numpy()
-
-            if cutoff_freq is not None:
-                # Calculate bin index: k = f * n_fft / sr
-                # default n_fft=2048, sr=48000
-                n_fft = 2048
-                sr = 48000
-                cutoffratio = int(cutoff_freq * n_fft / sr)
-            else:
-                cutoffratio = self._get_cutoff_index_np(x)
+            cutoffratio = self._get_cutoff_index_np(x)
 
             length = out.shape[0]
             stft_gt = librosa.stft(x)

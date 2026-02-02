@@ -227,7 +227,7 @@ def super_resolution(
     guidance_scale: float = 3.5,
     latent_t_per_second: float = 12.8,
     config: Optional[Any] = None,
-    deepcache_interval: int = 1,
+    deepcache_interval: int = 2,
     cfg_skip_threshold: float = 0.0,
     freeu_args: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:
@@ -264,7 +264,7 @@ def super_resolution_from_waveform(
     seed: int = 42,
     ddim_steps: int = 50,
     guidance_scale: float = 3.5,
-    deepcache_interval: int = 1,
+    deepcache_interval: int = 2,
     cfg_skip_threshold: float = 0.0,
     freeu_args: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:

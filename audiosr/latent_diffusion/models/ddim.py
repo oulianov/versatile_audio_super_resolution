@@ -11,6 +11,11 @@ from audiosr.latent_diffusion.modules.diffusionmodules.util import (
     noise_like,
 )
 
+# Optimization: Enable TensorFloat-32 (TF32) for faster matrix multiplications
+# on Ampere and newer NVIDIA GPUs.
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
 
 class DDIMSampler(object):
     def __init__(self, model, schedule="linear", device=torch.device("cuda"), **kwargs):

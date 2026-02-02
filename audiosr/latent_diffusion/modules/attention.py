@@ -130,18 +130,18 @@ class SpatialSelfAttention(nn.Module):
 
         # compute attention
         b, c, h, w = q.shape
-        q = rearrange(q, "b c h w -> b (h w) c")
-        k = rearrange(k, "b c h w -> b c (h w)")
-        w_ = torch.einsum("bij,bjk->bik", q, k)
-
-        w_ = w_ * (int(c) ** (-0.5))
-        w_ = torch.nn.functional.softmax(w_, dim=2)
-
-        # attend to values
         v = rearrange(v, "b c h w -> b c (h w)")
-        w_ = rearrange(w_, "b i j -> b j i")
-        h_ = torch.einsum("bij,bjk->bik", v, w_)
-        h_ = rearrange(h_, "b c (h w) -> b c h w", h=h)
+
+        # Optimization: Use Scaled Dot Product Attention (SDPA)
+        # SDPA expects (B, H, L, D). Here H=1.
+        q = q.unsqueeze(1)  # (b, 1, seq, c)
+        k = k.unsqueeze(1)  # (b, 1, c, seq) -> We need (b, 1, seq, c)
+        k = rearrange(k, "b c s -> b 1 s c")
+        v = v.unsqueeze(1)  # (b, 1, c, seq) -> We need (b, 1, seq, c)
+        v = rearrange(v, "b c s -> b 1 s c")
+
+        h_ = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+        h_ = rearrange(h_, "b 1 (h w) c -> b c h w", h=h)
         h_ = self.proj_out(h_)
 
         return x + h_
@@ -350,21 +350,28 @@ class CrossAttention(nn.Module):
         k = self.to_k(context)
         v = self.to_v(context)
 
-        q, k, v = map(lambda t: rearrange(t, "b n (h d) -> (b h) n d", h=h), (q, k, v))
-
-        sim = einsum("b i d, b j d -> b i j", q, k) * self.scale
+        # Optimization: Use Scaled Dot Product Attention (SDPA)
+        # SDPA expects (B, H, L, D)
+        q = rearrange(q, "b n (h d) -> b h n d", h=h)
+        k = rearrange(k, "b n (h d) -> b h n d", h=h)
+        v = rearrange(v, "b n (h d) -> b h n d", h=h)
 
         if exists(mask):
+            # SDPA expects a boolean mask or a float mask [B, H, L, L] or [B, L] etc.
             mask = rearrange(mask, "b ... -> b (...)")
-            max_neg_value = -torch.finfo(sim.dtype).max
-            mask = repeat(mask, "b j -> (b h) () j", h=h)
-            sim.masked_fill_(~(mask == 1), max_neg_value)
+            mask = repeat(
+                mask, "b j -> b () () j"
+            )  # Broadcast to (B, H, L_target, L_source)
+            attn_mask = (mask == 0).to(
+                torch.bool
+            )  # True where we want to mask (0 in original code)
+            out = torch.nn.functional.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, dropout_p=0.0
+            )
+        else:
+            out = torch.nn.functional.scaled_dot_product_attention(q, k, v)
 
-        # attention, what we cannot get enough of
-        attn = sim.softmax(dim=-1)
-
-        out = einsum("b i j, b j d -> b i d", attn, v)
-        out = rearrange(out, "(b h) n d -> b n (h d)", h=h)
+        out = rearrange(out, "b h n d -> b n (h d)")
         return self.to_out(out)
 
 

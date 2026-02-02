@@ -152,9 +152,9 @@ class PatchEmbed(nn.Module):
 
             # global processing
             B, C, H, W = global_x.shape
-            assert (
-                H == self.img_size[0] and W == self.img_size[1]
-            ), f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+            assert H == self.img_size[0] and W == self.img_size[1], (
+                f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+            )
             global_x = self.proj(global_x)
             TW = global_x.size(-1)
             if len(longer_idx) > 0:
@@ -186,9 +186,9 @@ class PatchEmbed(nn.Module):
             x = global_x
         else:
             B, C, H, W = x.shape
-            assert (
-                H == self.img_size[0] and W == self.img_size[1]
-            ), f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+            assert H == self.img_size[0] and W == self.img_size[1], (
+                f"Input image size ({H}*{W}) doesn't match model ({self.img_size[0]}*{self.img_size[1]})."
+            )
             x = self.proj(x)
 
         if self.flatten:
@@ -383,7 +383,9 @@ class WindowAttention(nn.Module):
         # get pair-wise relative position index for each token inside the window
         coords_h = torch.arange(self.window_size[0])
         coords_w = torch.arange(self.window_size[1])
-        coords = torch.stack(torch.meshgrid([coords_h, coords_w]))  # 2, Wh, Ww
+        coords = torch.stack(
+            torch.meshgrid([coords_h, coords_w], indexing="ij")
+        )  # 2, Wh, Ww
         coords_flatten = torch.flatten(coords, 1)  # 2, Wh*Ww
         relative_coords = (
             coords_flatten[:, :, None] - coords_flatten[:, None, :]
@@ -507,9 +509,9 @@ class SwinTransformerBlock(nn.Module):
             # if window size is larger than input resolution, we don't partition windows
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
-        assert (
-            0 <= self.shift_size < self.window_size
-        ), "shift_size must in 0-window_size"
+        assert 0 <= self.shift_size < self.window_size, (
+            "shift_size must in 0-window_size"
+        )
 
         self.norm1 = norm_layer(dim)
         self.attn = WindowAttention(
@@ -1071,9 +1073,9 @@ class HTSAT_Swin_Transformer(nn.Module):
         B, C, T, F = x.shape
         target_T = int(self.spec_size * self.freq_ratio)
         target_F = self.spec_size // self.freq_ratio
-        assert (
-            T <= target_T and F <= target_F
-        ), "the wav size should less than or equal to the swin input size"
+        assert T <= target_T and F <= target_F, (
+            "the wav size should less than or equal to the swin input size"
+        )
         # to avoid bicubic zero error
         if T < target_T:
             x = nn.functional.interpolate(
@@ -1101,9 +1103,9 @@ class HTSAT_Swin_Transformer(nn.Module):
         B, C, T, F = x.shape
         target_T = int(self.spec_size * self.freq_ratio)
         target_F = self.spec_size // self.freq_ratio
-        assert (
-            T <= target_T and F <= target_F
-        ), "the wav size should less than or equal to the swin input size"
+        assert T <= target_T and F <= target_F, (
+            "the wav size should less than or equal to the swin input size"
+        )
         # to avoid bicubic zero error
         if T < target_T:
             x = nn.functional.interpolate(

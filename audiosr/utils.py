@@ -143,7 +143,6 @@ def mel_spectrogram_train(y):
         center=False,
         pad_mode="reflect",
         normalized=False,
-        onesided=True,
         return_complex=True,
     )
 

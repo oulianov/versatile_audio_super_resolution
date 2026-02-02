@@ -216,8 +216,9 @@ class FlanT5HiddenState(nn.Module):
             truncation=True,
             return_tensors="pt",
         )
-        input_ids, attention_mask = batch.input_ids.to(device), batch.attention_mask.to(
-            device
+        input_ids, attention_mask = (
+            batch.input_ids.to(device),
+            batch.attention_mask.to(device),
         )
         # Get text encoding
         if self.freeze_text_encoder:
@@ -278,8 +279,9 @@ class AudioMAEConditionCTPoolRandTFSeparated(nn.Module):
         assert param.requires_grad == False
         device = param.device
         # time_pool, freq_pool = max(self.time_pooling_factors), max(self.freq_pooling_factors)
-        time_pool, freq_pool = min(self.eval_time_pooling, 64), min(
-            self.eval_freq_pooling, 8
+        time_pool, freq_pool = (
+            min(self.eval_time_pooling, 64),
+            min(self.eval_freq_pooling, 8),
         )
         # time_pool = self.time_pooling_factors[np.random.choice(list(range(len(self.time_pooling_factors))))]
         # freq_pool = self.freq_pooling_factors[np.random.choice(list(range(len(self.freq_pooling_factors))))]
@@ -311,8 +313,9 @@ class AudioMAEConditionCTPoolRandTFSeparated(nn.Module):
                 )
                 # freq_pool = min(8, time_pool) # TODO here I make some modification.
         else:
-            time_pool, freq_pool = min(self.eval_time_pooling, 64), min(
-                self.eval_freq_pooling, 8
+            time_pool, freq_pool = (
+                min(self.eval_time_pooling, 64),
+                min(self.eval_freq_pooling, 8),
             )
 
         self.avgpooling = nn.AvgPool2d(
@@ -402,8 +405,9 @@ class AudioMAEConditionCTPoolRand(nn.Module):
         assert param.requires_grad == False
         device = param.device
         # time_pool, freq_pool = max(self.time_pooling_factors), max(self.freq_pooling_factors)
-        time_pool, freq_pool = min(self.eval_time_pooling, 64), min(
-            self.eval_freq_pooling, 8
+        time_pool, freq_pool = (
+            min(self.eval_time_pooling, 64),
+            min(self.eval_freq_pooling, 8),
         )
         # time_pool = self.time_pooling_factors[np.random.choice(list(range(len(self.time_pooling_factors))))]
         # freq_pool = self.freq_pooling_factors[np.random.choice(list(range(len(self.freq_pooling_factors))))]
@@ -430,8 +434,9 @@ class AudioMAEConditionCTPoolRand(nn.Module):
                 # freq_pool = self.freq_pooling_factors[np.random.choice(list(range(len(self.freq_pooling_factors))))]
                 freq_pool = min(8, time_pool)  # TODO here I make some modification.
         else:
-            time_pool, freq_pool = min(self.eval_time_pooling, 64), min(
-                self.eval_freq_pooling, 8
+            time_pool, freq_pool = (
+                min(self.eval_time_pooling, 64),
+                min(self.eval_freq_pooling, 8),
             )
 
         self.avgpooling = nn.AvgPool2d(
@@ -528,7 +533,6 @@ class CLAPAudioEmbeddingClassifierFreev2(nn.Module):
             pad_mode="reflect",
             power=2.0,
             norm=None,
-            onesided=True,
             n_mels=64,
             f_min=audio_cfg["fmin"],
             f_max=audio_cfg["fmax"],

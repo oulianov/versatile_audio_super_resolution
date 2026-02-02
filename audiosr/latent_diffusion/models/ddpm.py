@@ -1676,7 +1676,7 @@ class DiffusionWrapper(nn.Module):
 
         self.being_verbosed_once = False
 
-    def forward(self, x, t, cond_dict: dict = {}, **kwargs):
+    def forward(self, x, t, cond_dict: dict = {}):
         x = x.contiguous()
         t = t.contiguous()
 

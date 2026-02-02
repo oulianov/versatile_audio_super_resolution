@@ -1499,6 +1499,7 @@ class LatentDiffusion(DDPM):
                 self.first_stage_key,
                 unconditional_prob_cfg=0.0,  # Do not output unconditional information in the c
             )
+            self.latent_t_size = z.size(-2)
             # Unconditional guidance handling
             # ...
 
@@ -1519,7 +1520,6 @@ class LatentDiffusion(DDPM):
                     c[cond_key] = torch.cat([c[cond_key]] * n_gen, dim=0)
 
             if unconditional_guidance_scale != 1.0:
-                print("DEBUG: generate_batch - getting unconditional conditioning...")
                 unconditional_conditioning = {}
                 for key in self.cond_stage_model_metadata:
                     model_idx = self.cond_stage_model_metadata[key]["model_idx"]
@@ -1527,7 +1527,6 @@ class LatentDiffusion(DDPM):
                         model_idx
                     ].get_unconditional_condition(batch_size)
 
-            print("DEBUG: generate_batch - starting sample_log...")
             samples, _ = self.sample_log(
                 cond=c,
                 batch_size=batch_size,

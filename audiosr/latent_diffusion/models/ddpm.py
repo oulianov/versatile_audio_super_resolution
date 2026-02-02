@@ -1633,7 +1633,10 @@ class LatentDiffusion(DDPM):
         return out_renewed.unsqueeze(1)
 
     def _get_cutoff_index_torch(self, x):
-        # x: (B, T)
+        # x: (B, T) or (B, 1, T)
+        if x.ndim == 3:
+            x = x.squeeze(1)
+
         n_fft = 2048
         hop_length = 512
         window = torch.hann_window(n_fft, device=x.device)

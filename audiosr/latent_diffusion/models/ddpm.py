@@ -1499,7 +1499,15 @@ class LatentDiffusion(DDPM):
                 self.first_stage_key,
                 unconditional_prob_cfg=0.0,  # Do not output unconditional information in the c
             )
-            self.latent_t_size = z.size(-2)
+            print("DEBUG: generate_batch - getting learned conditioning...")
+            c = self.get_learned_conditioning(batch)
+
+            if unconditional_prob_cfg > 0.0:
+                unconditional_conditioning = self.get_learned_conditioning(batch)
+
+            print("DEBUG: generate_batch - preparing cond dict...")
+            # Unconditional guidance handling
+            # ...
 
             c = self.filter_useful_cond_dict(c)
 

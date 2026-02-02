@@ -81,6 +81,20 @@ class DDIMSampler(object):
         self.register_buffer("ddim_alphas", ddim_alphas)
         self.register_buffer("ddim_alphas_prev", ddim_alphas_prev)
         self.register_buffer("ddim_sqrt_one_minus_alphas", np.sqrt(1.0 - ddim_alphas))
+
+        # Optimization: Convert numpy arrays to tensors on device immediately to avoid
+        # CPU-GPU transfers during sampling loops.
+        self.ddim_sigmas = torch.as_tensor(
+            self.ddim_sigmas, dtype=torch.float32, device=self.device
+        )
+        self.ddim_alphas = torch.as_tensor(
+            self.ddim_alphas, dtype=torch.float32, device=self.device
+        )
+        self.ddim_alphas_prev = torch.as_tensor(
+            self.ddim_alphas_prev, dtype=torch.float32, device=self.device
+        )
+        self.ddim_sqrt_one_minus_alphas = torch.sqrt(1.0 - self.ddim_alphas)
+
         sigmas_for_original_sampling_steps = ddim_eta * torch.sqrt(
             (1 - self.alphas_cumprod_prev)
             / (1 - self.alphas_cumprod)
@@ -328,12 +342,11 @@ class DDIMSampler(object):
             else self.ddim_sigmas
         )
         # select parameters corresponding to the currently considered timestep
-        a_t = torch.full((b, 1, 1, 1), alphas[index], device=device)
-        a_prev = torch.full((b, 1, 1, 1), alphas_prev[index], device=device)
-        sigma_t = torch.full((b, 1, 1, 1), sigmas[index], device=device)
-        sqrt_one_minus_at = torch.full(
-            (b, 1, 1, 1), sqrt_one_minus_alphas[index], device=device
-        )
+        # Optimization: Use tensor slicing to keep computations on device
+        a_t = alphas[index].view(1, 1, 1, 1)
+        a_prev = alphas_prev[index].view(1, 1, 1, 1)
+        sigma_t = sigmas[index].view(1, 1, 1, 1)
+        sqrt_one_minus_at = sqrt_one_minus_alphas[index].view(1, 1, 1, 1)
 
         # current prediction for x_0
         if self.model.parameterization != "v":

@@ -80,6 +80,9 @@ def lowpass_filtering_prepare_inference(dl_output):
     if cutoff_freq < 1000:
         cutoff_freq = 24000
 
+    # Ensure cutoff is strictly less than Nyquist (sr/2)
+    cutoff_freq = min(cutoff_freq, (sampling_rate / 2) - 1.0)
+
     order = 8
     ftype = np.random.choice(["butter", "cheby1", "ellip", "bessel"])
     filtered_audio = lowpass(

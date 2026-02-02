@@ -314,8 +314,10 @@ def super_resolution_from_waveform(
         "sampling_rate": sampling_rate,
     }
 
+    print("DEBUG: Lowpass filtering...")
     batch.update(lowpass_filtering_prepare_inference(batch))
 
+    print("DEBUG: Second feature extraction (lowpass)...")
     lowpass_mel, lowpass_stft = wav_feature_extraction(
         batch["waveform_lowpass"], target_frame
     )

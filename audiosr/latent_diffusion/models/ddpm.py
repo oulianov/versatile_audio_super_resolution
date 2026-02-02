@@ -1638,7 +1638,7 @@ class DiffusionWrapper(nn.Module):
 
         for key in self.concat_keys:
             cond = cond_dict[key]
-            # cond = cond * self.scale_factor
+            cond = cond * self.scale_factor
             xc = torch.cat([xc, cond], dim=1)
 
         for key in self.film_keys:

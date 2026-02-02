@@ -213,9 +213,9 @@ class DDPM(nn.Module):
         self.num_timesteps = int(timesteps)
         self.linear_start = linear_start
         self.linear_end = linear_end
-        assert (
-            alphas_cumprod.shape[0] == self.num_timesteps
-        ), "alphas have to be defined for each timestep"
+        assert alphas_cumprod.shape[0] == self.num_timesteps, (
+            "alphas have to be defined for each timestep"
+        )
 
         to_torch = partial(torch.tensor, dtype=torch.float32)
 
@@ -233,10 +233,12 @@ class DDPM(nn.Module):
             "log_one_minus_alphas_cumprod", to_torch(np.log(1.0 - alphas_cumprod))
         )
         self.register_buffer(
-            "sqrt_recip_alphas_cumprod", to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon)))
+            "sqrt_recip_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon))),
         )
         self.register_buffer(
-            "sqrt_recipm1_alphas_cumprod", to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon) - 1))
+            "sqrt_recipm1_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon) - 1)),
         )
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
@@ -1015,16 +1017,7 @@ class LatentDiffusion(DDPM):
         loss, loss_dict = self.p_losses(x, c, t, *args, **kwargs)
         return loss, loss_dict
 
-    def reorder_cond_dict(self, cond_dict):
-        # To make sure the order is correct
-        new_cond_dict = {}
-        for key in self.conditioning_key:
-            new_cond_dict[key] = cond_dict[key]
-        return new_cond_dict
-
     def apply_model(self, x_noisy, t, cond, return_ids=False):
-        cond = self.reorder_cond_dict(cond)
-
         x_recon = self.model(x_noisy, t, cond_dict=cond)
 
         if isinstance(x_recon, tuple) and not return_ids:
@@ -1487,68 +1480,68 @@ class LatentDiffusion(DDPM):
         use_ddim = ddim_steps is not None
 
         # with self.ema_scope("Plotting"):
-        for i in range(1):
-            z, c = self.get_input(
-                batch,
-                self.first_stage_key,
-                unconditional_prob_cfg=0.0,  # Do not output unconditional information in the c
-            )
-            self.latent_t_size = z.size(-2)
+        z, c = self.get_input(
+            batch,
+            self.first_stage_key,
+            unconditional_prob_cfg=0.0,  # Do not output unconditional information in the c
+        )
+        self.latent_t_size = z.size(-2)
 
-            c = self.filter_useful_cond_dict(c)
+        c = self.filter_useful_cond_dict(c)
 
-            # Generate multiple samples
-            batch_size = z.shape[0] * n_gen
+        # Generate multiple samples
+        batch_size = z.shape[0] * n_gen
 
-            # Generate multiple samples at a time and filter out the best
-            # The condition to the diffusion wrapper can have many format
-            for cond_key in c.keys():
-                if isinstance(c[cond_key], list):
-                    for i in range(len(c[cond_key])):
-                        c[cond_key][i] = torch.cat([c[cond_key][i]] * n_gen, dim=0)
-                elif isinstance(c[cond_key], dict):
-                    for k in c[cond_key].keys():
-                        c[cond_key][k] = torch.cat([c[cond_key][k]] * n_gen, dim=0)
-                else:
-                    c[cond_key] = torch.cat([c[cond_key]] * n_gen, dim=0)
+        # Generate multiple samples at a time and filter out the best
+        # The condition to the diffusion wrapper can have many format
+        for cond_key in c.keys():
+            if isinstance(c[cond_key], list):
+                # c[cond_key] = [torch.cat([item] * n_gen, dim=0) for item in c[cond_key]]
+                for i in range(len(c[cond_key])):
+                    c[cond_key][i] = torch.cat([c[cond_key][i]] * n_gen, dim=0)
+            elif isinstance(c[cond_key], dict):
+                for k in c[cond_key].keys():
+                    c[cond_key][k] = torch.cat([c[cond_key][k]] * n_gen, dim=0)
+            else:
+                c[cond_key] = torch.cat([c[cond_key]] * n_gen, dim=0)
 
-            if unconditional_guidance_scale != 1.0:
-                unconditional_conditioning = {}
-                for key in self.cond_stage_model_metadata:
-                    model_idx = self.cond_stage_model_metadata[key]["model_idx"]
-                    unconditional_conditioning[key] = self.cond_stage_models[
-                        model_idx
-                    ].get_unconditional_condition(batch_size)
+        if unconditional_guidance_scale != 1.0:
+            unconditional_conditioning = {}
+            for key in self.cond_stage_model_metadata:
+                model_idx = self.cond_stage_model_metadata[key]["model_idx"]
+                unconditional_conditioning[key] = self.cond_stage_models[
+                    model_idx
+                ].get_unconditional_condition(batch_size)
 
-            samples, _ = self.sample_log(
-                cond=c,
-                batch_size=batch_size,
-                x_T=x_T,
-                ddim=use_ddim,
-                ddim_steps=ddim_steps,
-                eta=ddim_eta,
-                unconditional_guidance_scale=unconditional_guidance_scale,
-                unconditional_conditioning=unconditional_conditioning,
-                use_plms=use_plms,
-            )
+        samples, _ = self.sample_log(
+            cond=c,
+            batch_size=batch_size,
+            x_T=x_T,
+            ddim=use_ddim,
+            ddim_steps=ddim_steps,
+            eta=ddim_eta,
+            unconditional_guidance_scale=unconditional_guidance_scale,
+            unconditional_conditioning=unconditional_conditioning,
+            use_plms=use_plms,
+        )
 
-            mel = self.decode_first_stage(samples)
+        mel = self.decode_first_stage(samples)
 
-            mel = self.mel_replace_ops(mel, super().get_input(batch, "lowpass_mel"))
+        mel = self.mel_replace_ops(mel, super().get_input(batch, "lowpass_mel"))
 
-            waveform = self.mel_spectrogram_to_waveform(
-                mel, savepath="", bs=None, save=False
-            )
+        waveform = self.mel_spectrogram_to_waveform(
+            mel, savepath="", bs=None, save=False
+        )
 
-            waveform_lowpass = super().get_input(batch, "waveform_lowpass")
-            waveform = self.postprocessing(waveform, waveform_lowpass)
+        waveform_lowpass = super().get_input(batch, "waveform_lowpass")
+        waveform = self.postprocessing(waveform, waveform_lowpass)
 
-            max_amp = np.max(np.abs(waveform), axis=-1)
-            waveform = 0.5 * waveform / max_amp[..., None]
-            mean_amp = np.mean(waveform, axis=-1)[..., None]
-            waveform = waveform - mean_amp
+        max_amp = np.max(np.abs(waveform), axis=-1)
+        waveform = 0.5 * waveform / max_amp[..., None]
+        mean_amp = np.mean(waveform, axis=-1)[..., None]
+        waveform = waveform - mean_amp
 
-            return waveform
+        return waveform
 
     def _locate_cutoff_freq(self, stft, percentile=0.985):
         def _find_cutoff(x, percentile=0.95):
@@ -1615,19 +1608,21 @@ class DiffusionWrapper(nn.Module):
             None  # This factor is set in LatentDiffusion for scaling of VAE latent
         )
         self.conditioning_key = conditioning_key
+        self.concat_keys = []
+        self.crossattn_keys = []
+        self.film_keys = []
 
         for key in self.conditioning_key:
-            if (
-                "concat" in key
-                or "crossattn" in key
-                or "hybrid" in key
-                or "film" in key
-                or "noncond" in key
-                or "ignore" in key
-            ):
+            if "concat" in key:
+                self.concat_keys.append(key)
+            elif "crossattn" in key:
+                self.crossattn_keys.append(key)
+            elif "film" in key:
+                self.film_keys.append(key)
+            elif "hybrid" in key or "noncond" in key or "ignore" in key:
                 continue
             else:
-                raise Value("The conditioning key %s is illegal" % key)
+                raise ValueError("The conditioning key %s is illegal" % key)
 
         self.being_verbosed_once = False
 
@@ -1641,45 +1636,27 @@ class DiffusionWrapper(nn.Module):
         y = None
         context_list, attn_mask_list = [], []
 
-        conditional_keys = cond_dict.keys()
+        for key in self.concat_keys:
+            cond = cond_dict[key]
+            # cond = cond * self.scale_factor
+            xc = torch.cat([xc, cond], dim=1)
 
-        for key in conditional_keys:
-            if "ignore" in key:
-                continue
-            elif "concat" in key:
-                cond = cond_dict[key]
-                cond = cond * self.scale_factor
-                xc = torch.cat([x, cond], dim=1)
-            elif "film" in key:
-                if y is None:
-                    y = cond_dict[key].squeeze(1)
-                else:
-                    y = torch.cat([y, cond_dict[key].squeeze(1)], dim=-1)
-            elif "crossattn" in key:
-                # assert context is None, "You can only have one context matrix, got %s" % (cond_dict.keys())
-                if isinstance(cond_dict[key], dict):
-                    for k in cond_dict[key].keys():
-                        if "crossattn" in k:
-                            context, attn_mask = cond_dict[key][
-                                k
-                            ]  # crossattn_audiomae_pooled: torch.Size([12, 128, 768])
-                else:
-                    assert len(cond_dict[key]) == 2, (
-                        "The context condition for %s you returned should have two element, one context one mask"
-                        % (key)
-                    )
-                    context, attn_mask = cond_dict[key]
-
-                # The input to the UNet model is a list of context matrix
-                context_list.append(context)
-                attn_mask_list.append(attn_mask)
-
-            elif (
-                "noncond" in key
-            ):  # If you use loss function in the conditional module, include the keyword "noncond" in the return dictionary
-                continue
+        for key in self.film_keys:
+            if y is None:
+                y = cond_dict[key].squeeze(1)
             else:
-                raise NotImplementedError()
+                y = torch.cat([y, cond_dict[key].squeeze(1)], dim=-1)
+
+        for key in self.crossattn_keys:
+            if isinstance(cond_dict[key], dict):
+                for k in cond_dict[key].keys():
+                    if "crossattn" in k:
+                        context, attn_mask = cond_dict[key][k]
+            else:
+                context, attn_mask = cond_dict[key]
+
+            context_list.append(context)
+            attn_mask_list.append(attn_mask)
 
         out = self.diffusion_model(
             xc, t, context_list=context_list, y=y, context_attn_mask_list=attn_mask_list

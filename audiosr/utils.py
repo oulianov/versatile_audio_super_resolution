@@ -14,7 +14,7 @@ import progressbar
 import soundfile as sf
 import torch
 import torchaudio
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from librosa.filters import mel as librosa_mel_fn
 
 from audiosr.lowpass import lowpass
@@ -461,9 +461,8 @@ def download_checkpoint(checkpoint_name="basic", use_safetensors=False):
         # 1. Try to find local/cached safetensors first or download if available on HF
         try:
             print(f"Attempting to download/locate safetensors for {model_id}...")
-            checkpoint_path = hf_hub_download(
-                repo_id=model_id, filename="audiosr.safetensors"
-            )
+            checkpoint_path = snapshot_download(repo_id=model_id)
+            checkpoint_path = f"{checkpoint_path}/audiosr.safetensors"
             return checkpoint_path
         except Exception:
             print(

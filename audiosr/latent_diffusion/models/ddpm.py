@@ -918,16 +918,17 @@ class LatentDiffusion(DDPM):
         return decoding
 
     def mel_spectrogram_to_waveform(
-        self, mel, savepath=".", bs=None, name="outwav", save=True
+        self, mel, savepath=".", bs=None, name="outwav", save=False
     ):
         # Mel: [bs, 1, t-steps, fbins]
         if len(mel.size()) == 4:
             mel = mel.squeeze(1)
         mel = mel.permute(0, 2, 1)
         waveform = self.first_stage_model.vocoder(mel)
-        waveform = waveform.cpu().detach().numpy()
         if save:
-            self.save_waveform(waveform, savepath, name)
+            waveform_np = waveform.cpu().detach().numpy()
+            self.save_waveform(waveform_np, savepath, name)
+            return waveform_np
         return waveform
 
     def encode_first_stage(self, x):
@@ -1589,8 +1590,13 @@ class LatentDiffusion(DDPM):
         # Ensure inputs are tensors on device
         if not isinstance(out_batch, torch.Tensor):
             out_batch = torch.tensor(out_batch, device=self.device)
+        else:
+            out_batch = out_batch.to(self.device)
+
         if not isinstance(x_batch, torch.Tensor):
             x_batch = torch.tensor(x_batch, device=self.device)
+        else:
+            x_batch = x_batch.to(self.device)
 
         batch_size = out_batch.shape[0]
         # Using librosa defaults for STFT to match original behavior

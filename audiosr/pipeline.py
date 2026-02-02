@@ -334,6 +334,7 @@ def super_resolution_from_waveform(
 
     # Process
     device_type = latent_diffusion.device.type
+    print(f"DEBUG: Starting generate_batch on {device_type}...")
     with torch.inference_mode(), torch.autocast(device_type):
         result = latent_diffusion.generate_batch(
             batch,

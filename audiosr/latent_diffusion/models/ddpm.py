@@ -830,6 +830,7 @@ class LatentDiffusion(DDPM):
         return_encoder_output=False,
         unconditional_prob_cfg=0.1,
     ):
+        print(f"DEBUG: get_input start for key={k}")
         x = super().get_input(batch, k)
 
         x = x.to(self.device)
@@ -1494,6 +1495,7 @@ class LatentDiffusion(DDPM):
 
         # with self.ema_scope("Plotting"):
         for i in range(1):
+            print("DEBUG: generate_batch - calling get_input...")
             z, c = self.get_input(
                 batch,
                 self.first_stage_key,

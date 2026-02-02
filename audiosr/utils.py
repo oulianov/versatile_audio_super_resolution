@@ -76,17 +76,12 @@ def lowpass_filtering_prepare_inference(dl_output):
         _locate_cutoff_freq(dl_output["stft"], percentile=0.985) / 1024
     ) * 24000
 
-    # If the audio is almost empty or cutoff is near Nyquist. Give up processing
+    # If the audio is almost empty. Give up processing
     if cutoff_freq < 1000:
         cutoff_freq = 24000
 
-    # If calculate cutoff is essentially Nyquist, skip filtering to avoid numerical issues
-    # and unnecessary processing.
-    if cutoff_freq >= (sampling_rate / 2) - 1000:
-        return {"waveform_lowpass": torch.FloatTensor(waveform.numpy()).unsqueeze(0)}
-
-    # Ensure cutoff is strictly less than Nyquist (sr/2) for stability
-    cutoff_freq = min(cutoff_freq, (sampling_rate / 2) - 100.0)
+    # Ensure cutoff is strictly less than Nyquist (sr/2)
+    cutoff_freq = min(cutoff_freq, (sampling_rate / 2) - 1.0)
 
     order = 8
     ftype = np.random.choice(["butter", "cheby1", "ellip", "bessel"])

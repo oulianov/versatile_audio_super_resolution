@@ -1,3 +1,4 @@
+from audiosr.latent_diffusion.modules.diffusionmodules.util import checkpoint
 import contextlib
 import importlib
 import json
@@ -454,14 +455,14 @@ def download_checkpoint(checkpoint_name="basic", use_safetensors=False):
     elif checkpoint_name == "speech":
         model_id = "haoheliu/audiosr_speech"
     else:
-        raise ValueError("Invalid Model Name %s" % checkpoint_name)
+        model_id = checkpoint_name
 
     if use_safetensors:
         # 1. Try to find local/cached safetensors first or download if available on HF
         try:
             print(f"Attempting to download/locate safetensors for {model_id}...")
             checkpoint_path = hf_hub_download(
-                repo_id=model_id, filename="model.safetensors"
+                repo_id=model_id, filename="audiosr.safetensors"
             )
             return checkpoint_path
         except Exception:

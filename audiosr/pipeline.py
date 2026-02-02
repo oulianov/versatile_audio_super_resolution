@@ -198,6 +198,7 @@ def super_resolution(
     guidance_scale=3.5,
     latent_t_per_second=12.8,
     config=None,
+    cutoff_freq=None,
 ):
     seed_everything(int(seed))
     waveform = None
@@ -210,6 +211,7 @@ def super_resolution(
             unconditional_guidance_scale=guidance_scale,
             ddim_steps=ddim_steps,
             duration=duration,
+            cutoff_freq=cutoff_freq,
         )
 
     return waveform
@@ -221,6 +223,7 @@ def super_resolution_from_waveform(
     seed=42,
     ddim_steps=200,
     guidance_scale=3.5,
+    cutoff_freq=None,
 ):
     """
     Process a single waveform directly without saving to file.
@@ -284,6 +287,7 @@ def super_resolution_from_waveform(
             unconditional_guidance_scale=guidance_scale,
             ddim_steps=ddim_steps,
             duration=pad_duration,
+            cutoff_freq=cutoff_freq,
         )
 
     # Convert to numpy and trim to original length
@@ -342,6 +346,7 @@ def super_resolution_batch(
     seed=42,
     ddim_steps=200,
     guidance_scale=3.5,
+    cutoff_freq=None,
 ):
     """
     Process multiple waveform chunks in a SINGLE forward pass (true GPU parallelism).
@@ -402,6 +407,7 @@ def super_resolution_batch(
             unconditional_guidance_scale=guidance_scale,
             ddim_steps=ddim_steps,
             duration=target_duration,
+            cutoff_freq=cutoff_freq,
         )
 
     # Convert results to numpy
@@ -428,6 +434,7 @@ def super_resolution_long_audio(
     guidance_scale=3.5,
     chunk_duration_s=15,
     overlap_duration_s=2,
+    cutoff_freq=None,
 ):
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
@@ -509,6 +516,7 @@ def super_resolution_long_audio(
                 unconditional_guidance_scale=guidance_scale,
                 ddim_steps=ddim_steps,
                 duration=duration,
+                cutoff_freq=cutoff_freq,
             )  # This should return a tensor
 
         # Ensure the processed chunk is a tensor

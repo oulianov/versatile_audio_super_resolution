@@ -319,27 +319,31 @@ class DDIMSampler(object):
                         for i in range(len(c[k]))
                     ]
                 elif isinstance(c[k], dict):
+                    # Handle nested dicts (e.g. crossattn) if needed, simple concatenation for now
+                    # This might need refinement based on structure, but generally works for tensors
                     c_in[k] = {}
                     for sub_k in c[k]:
-                        if isinstance(c[k][sub_k], list):
+                        if isinstance(
+                            c[k][sub_k], (list, tuple)
+                        ):  # List of context, mask
                             c_in[k][sub_k] = [
                                 torch.cat(
                                     [
-                                        c[k][sub_k][i],
                                         unconditional_conditioning[k][sub_k][i],
+                                        c[k][sub_k][i],
                                     ]
                                 )
                                 for i in range(len(c[k][sub_k]))
                             ]
                         else:
                             c_in[k][sub_k] = torch.cat(
-                                [c[k][sub_k], unconditional_conditioning[k][sub_k]]
+                                [unconditional_conditioning[k][sub_k], c[k][sub_k]]
                             )
                 else:
-                    c_in[k] = torch.cat([c[k], unconditional_conditioning[k]])
+                    c_in[k] = torch.cat([unconditional_conditioning[k], c[k]])
 
             model_out_batched = self.model.apply_model(x_in, t_in, c_in)
-            model_t, model_uncond = model_out_batched.chunk(2)
+            model_uncond, model_t = model_out_batched.chunk(2)
 
             model_output = model_uncond + unconditional_guidance_scale * (
                 model_t - model_uncond

@@ -32,7 +32,6 @@ dependencies = [
     "timm",
     "matplotlib",
     "diffusers",
-    "pyinstrument",
 ]
 
 

@@ -10,3 +10,5 @@ build*
 dist/
 *DS_Store*
 *.safetensors
+.venv/*
+.venv

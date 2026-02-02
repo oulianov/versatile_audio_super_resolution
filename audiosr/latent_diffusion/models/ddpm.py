@@ -1654,7 +1654,7 @@ class LatentDiffusion(DDPM):
         # energy: (B, F)
         energy = torch.cumsum(torch.sum(magnitude, dim=-1), dim=-1)
         threshold = energy[:, -1:] * 0.985
-        cutoff_indices = (energy >= threshold).argmax(dim=-1)
+        cutoff_indices = (energy >= threshold).long().argmax(dim=-1)
         return cutoff_indices, stft_x
 
 

@@ -36,10 +36,7 @@ class DDIMSampler(object):
         self.device = device
         self.deepcache_interval = deepcache_interval
         # Sensible default for deepcache_layer_idx if none provided (around the middle)
-        if self.deepcache_interval > 1:
-            self.deepcache_layer_idx = deepcache_layer_idx or 4
-        else:
-            self.deepcache_layer_idx = None
+        self.deepcache_layer_idx = deepcache_layer_idx
         self.cfg_skip_threshold = cfg_skip_threshold
         self.freeu_args = freeu_args
 

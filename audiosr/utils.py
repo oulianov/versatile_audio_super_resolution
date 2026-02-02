@@ -95,7 +95,7 @@ def lowpass_filtering_prepare_inference(dl_output):
     if waveform.size(-1) <= filtered_audio.size(-1):
         filtered_audio = filtered_audio[..., : waveform.size(-1)]
     else:
-        filtered_audio = torch.nn.functional.pad(
+        filtered_audio = torch.functional.pad(
             filtered_audio, (0, waveform.size(-1) - filtered_audio.size(-1))
         )
 

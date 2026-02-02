@@ -7,7 +7,7 @@ name = "audiosr"
 version = "0.0.7"
 description = "This package is written for text-to-audio/music generation."
 readme = "README.md"
-requires-python = ">=3.9,<3.10"
+requires-python = ">=3.10,<3.11"
 dependencies = [
     "torch>=2.0.1",
     "torchaudio>=2.0.2",

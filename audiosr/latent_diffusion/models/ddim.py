@@ -303,17 +303,43 @@ class DDIMSampler(object):
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.0:
             model_output = self.model.apply_model(x, t, c)
         else:
-            x_in = x
-            t_in = t
+            # Batching conditional and unconditional passes
+            x_in = torch.cat([x, x])
+            t_in = torch.cat([t, t])
 
-            assert isinstance(c, dict)
-            assert isinstance(unconditional_conditioning, dict)
+            # Combine conditioning dictionaries
+            c_in = {}
+            # Assuming c and unconditional_conditioning have the same keys and structure
+            assert isinstance(c, dict) and isinstance(unconditional_conditioning, dict)
 
-            model_t = self.model.apply_model(x_in, t_in, c)
+            for k in c:
+                if isinstance(c[k], list):
+                    c_in[k] = [
+                        torch.cat([unconditional_conditioning[k][i], c[k][i]])
+                        for i in range(len(c[k]))
+                    ]
+                elif isinstance(c[k], dict):
+                    c_in[k] = {}
+                    for sub_k in c[k]:
+                        if isinstance(c[k][sub_k], list):
+                            c_in[k][sub_k] = [
+                                torch.cat(
+                                    [
+                                        c[k][sub_k][i],
+                                        unconditional_conditioning[k][sub_k][i],
+                                    ]
+                                )
+                                for i in range(len(c[k][sub_k]))
+                            ]
+                        else:
+                            c_in[k][sub_k] = torch.cat(
+                                [c[k][sub_k], unconditional_conditioning[k][sub_k]]
+                            )
+                else:
+                    c_in[k] = torch.cat([c[k], unconditional_conditioning[k]])
 
-            model_uncond = self.model.apply_model(
-                x_in, t_in, unconditional_conditioning
-            )
+            model_out_batched = self.model.apply_model(x_in, t_in, c_in)
+            model_t, model_uncond = model_out_batched.chunk(2)
 
             model_output = model_uncond + unconditional_guidance_scale * (
                 model_t - model_uncond

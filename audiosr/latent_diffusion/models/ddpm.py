@@ -1545,10 +1545,26 @@ class LatentDiffusion(DDPM):
 
     def _locate_cutoff_freq(self, stft, percentile=0.985):
         def _find_cutoff(x, percentile=0.95):
-            percentile = x[-1] * percentile
-            for i in range(1, x.shape[0]):
-                if x[-i] < percentile:
-                    return x.shape[0] - i
+            threshold = x[-1] * percentile
+            # Efficiently find cutoff on GPU/Tensor
+            # Find first index where value > threshold in reverse cumulative sum or similar
+            # Since detection is simple: iterate from end
+            # For tensors, we can use (x < threshold).nonzero()
+            mask = x < threshold
+            if mask.any():
+                # Get the last index where it's lower than threshold starting from end
+                # Actually logic is: find i such that x[-i] < threshold.
+                # Since energy is cumulative sum, it's monotonically increasing.
+                # We want the index where energy[idx] >= threshold * total_energy
+                # which is equivalent to finding detection logic.
+
+                # Re-reading original logic:
+                # for i in range(1, x.shape[0]): if x[-i] < threshold: return x.shape[0] - i
+
+                # Torch equivalent:
+                indices = torch.nonzero(x < threshold, as_tuple=True)[0]
+                if indices.shape[0] > 0:
+                    return indices[-1].item()
             return 0
 
         magnitude = torch.abs(stft)
@@ -1556,48 +1572,104 @@ class LatentDiffusion(DDPM):
         return _find_cutoff(energy, percentile)
 
     def mel_replace_ops(self, samples, input):
+        print(
+            f"mel_replace_ops: samples shape: {samples.shape}, input shape: {input.shape}"
+        )
         for i in range(samples.size(0)):
-            cutoff_melbin = self._locate_cutoff_freq(torch.exp(input[i]))
-
-            # ratio = samples[i][...,:cutoff_melbin]/input[i][...,:cutoff_melbin]
-            # print(torch.mean(ratio), torch.max(ratio), torch.min(ratio))
-
+            # input[i] is likely [1, F, T] or [F, T]
+            inp = input[i].squeeze(0) if input[i].dim() == 3 else input[i]
+            cutoff_melbin = self._locate_cutoff_freq(torch.exp(inp))
             samples[i][..., :cutoff_melbin] = input[i][..., :cutoff_melbin]
         return samples
 
-    def postprocessing(self, out_batch, x_batch):  # x is target
-        # Replace the low resolution part with the ground truth
-        for i in range(out_batch.shape[0]):
-            out = out_batch[i, 0]
-            x = x_batch[i, 0].cpu().numpy()
-            cutoffratio = self._get_cutoff_index_np(x)
+    def postprocessing(self, out_batch, x_batch):
+        # out_batch: [B, T] waveform
+        # x_batch: [B, T] target/lowpass waveform
 
-            length = out.shape[0]
-            stft_gt = librosa.stft(x)
+        # Ensure inputs are tensors on device
+        if not isinstance(out_batch, torch.Tensor):
+            out_batch = torch.tensor(out_batch, device=self.device)
+        if not isinstance(x_batch, torch.Tensor):
+            x_batch = torch.tensor(x_batch, device=self.device)
 
-            stft_out = librosa.stft(out)
-            energy_ratio = np.mean(
-                np.sum(np.abs(stft_gt[cutoffratio]))
-                / np.sum(np.abs(stft_out[cutoffratio, ...]))
+        batch_size = out_batch.shape[0]
+        # Using librosa defaults for STFT to match original behavior
+        n_fft = 2048
+        hop_length = 512
+        win_length = 2048
+        window = torch.hann_window(win_length, device=out_batch.device)
+
+        for i in range(batch_size):
+            out = out_batch[i]  # [T]
+            x = x_batch[i]  # [T]
+
+            # Use torch.stft
+            # return_complex=True is available in recent torch, else [..., 2]
+            stft_x = torch.stft(
+                x,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                win_length=win_length,
+                window=window,
+                return_complex=True,
             )
-            energy_ratio = min(max(energy_ratio, 0.8), 1.2)
-            stft_out[:cutoffratio, ...] = stft_gt[:cutoffratio, ...] / energy_ratio
+            stft_out = torch.stft(
+                out,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                win_length=win_length,
+                window=window,
+                return_complex=True,
+            )
 
-            out_renewed = librosa.istft(stft_out, length=length)
+            # Calc cutoff
+            # stft_x: [F, T] complex
+            mag_x = torch.abs(stft_x)
+            energy = torch.cumsum(torch.sum(mag_x, dim=-1), dim=0)
+            threshold = energy[-1] * 0.985
+
+            # Find cutoff index
+            indices = torch.nonzero(energy < threshold, as_tuple=True)[0]
+            if indices.shape[0] > 0:
+                cutoffratio = indices[-1].item()
+            else:
+                cutoffratio = 0
+
+            # Energy matching
+            # np.sum(np.abs(stft_gt[cutoffratio])) -> sum over time for that freq bin?
+            # Original: np.sum(np.abs(stft_gt[cutoffratio])) / np.sum(np.abs(stft_out[cutoffratio, ...]))
+            # It seems it sums over all columns (time) for the cutoff frequency row
+
+            mag_gt_at_cutoff = torch.sum(torch.abs(stft_x[cutoffratio]))
+            mag_out_at_cutoff = torch.sum(torch.abs(stft_out[cutoffratio]))
+
+            energy_ratio = mag_gt_at_cutoff / mag_out_at_cutoff
+            energy_ratio = torch.clamp(energy_ratio, 0.8, 1.2)
+
+            # Replace low freq content
+            # stft_out[:cutoffratio, ...] = stft_gt[:cutoffratio, ...] / energy_ratio
+            stft_out[:cutoffratio] = stft_x[:cutoffratio] / energy_ratio
+
+            # Inverse STFT
+            out_renewed = torch.istft(
+                stft_out,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                win_length=win_length,
+                window=window,
+                length=out.shape[0],
+            )
             out_batch[i] = out_renewed
-        return out_batch
+
+        return out_batch.cpu().numpy()
 
     def _find_cutoff_np(self, x, threshold=0.95):
-        threshold = x[-1] * threshold
-        for i in range(1, x.shape[0]):
-            if x[-i] < threshold:
-                return x.shape[0] - i
+        # Deprecated / Unused with new postprocessing
         return 0
 
     def _get_cutoff_index_np(self, x):
-        stft_x = np.abs(librosa.stft(x))
-        energy = np.cumsum(np.sum(stft_x, axis=-1))
-        return self._find_cutoff_np(energy, 0.985)
+        # Deprecated / Unused with new postprocessing
+        return 0
 
 
 class DiffusionWrapper(nn.Module):

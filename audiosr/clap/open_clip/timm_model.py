@@ -9,10 +9,11 @@ import torch.nn as nn
 
 try:
     import timm
+    from timm.layers import Mlp, to_2tuple
     from timm.layers import (
         AttentionPool2d as AbsAttentionPool2d,
     )
-    from timm.layers import Mlp, RotAttentionPool2d, to_2tuple
+    from timm.layers import RotAttentionPool2d
 except ImportError:
     timm = None
 

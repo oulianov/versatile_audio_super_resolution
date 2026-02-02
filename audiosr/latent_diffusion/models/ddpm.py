@@ -2,7 +2,6 @@ import os
 from contextlib import contextmanager
 from functools import partial
 from multiprocessing.sharedctypes import Value
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import librosa
 import numpy as np
@@ -79,7 +78,7 @@ class DDPM(nn.Module):
         learn_logvar=False,
         logvar_init=0.0,
         evaluator=None,
-        device: Optional[Union[str, torch.device]] = None,
+        device=None,
     ):
         super().__init__()
         assert parameterization in [

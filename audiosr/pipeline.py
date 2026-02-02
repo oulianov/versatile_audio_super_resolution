@@ -1,7 +1,6 @@
 import gc
 import os
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import soundfile as sf
@@ -9,8 +8,6 @@ import torch
 import torch.nn.functional as F
 import torchaudio
 import yaml
-from loguru import logger
-from pyinstrument import Profiler
 
 import audiosr.latent_diffusion.modules.phoneme_encoder.text as text
 from audiosr.latent_diffusion.models.ddpm import LatentDiffusion
@@ -24,9 +21,10 @@ from audiosr.utils import (
     read_audio_file,
     wav_feature_extraction,
 )
+from pyinstrument import Profiler
 
 
-def seed_everything(seed: int) -> None:
+def seed_everything(seed):
     import random
 
     import numpy as np
@@ -41,17 +39,15 @@ def seed_everything(seed: int) -> None:
     torch.backends.cudnn.benchmark = True
 
 
-def text2phoneme(data: str) -> str:
+def text2phoneme(data):
     return text._clean_text(re.sub(r"<.*?>", "", data), ["english_cleaners2"])
 
 
-def text_to_filename(text: str) -> str:
+def text_to_filename(text):
     return text.replace(" ", "_").replace("'", "_").replace('"', "_")
 
 
-def extract_kaldi_fbank_feature(
-    waveform: torch.Tensor, sampling_rate: int, log_mel_spec: torch.Tensor
-) -> Dict[str, torch.Tensor]:
+def extract_kaldi_fbank_feature(waveform, sampling_rate, log_mel_spec):
     norm_mean = -4.2677393
     norm_std = 4.5689974
 
@@ -90,11 +86,7 @@ def extract_kaldi_fbank_feature(
     return {"ta_kaldi_fbank": fbank}  # [1024, 128]
 
 
-def make_batch_for_super_resolution(
-    input_file: str,
-    waveform: Optional[torch.Tensor] = None,
-    fbank: Optional[torch.Tensor] = None,
-) -> Tuple[Dict[str, Any], float]:
+def make_batch_for_super_resolution(input_file, waveform=None, fbank=None):
     if waveform is None:
         # Original logic if no waveform is provided
         log_mel_spec, stft, waveform, duration, target_frame = read_audio_file(
@@ -152,12 +144,11 @@ def round_up_duration(duration):
 
 
 def build_model(
-    ckpt_path: Optional[str] = None,
-    config: Optional[Union[str, Dict[str, Any]]] = None,
-    device: Optional[Union[str, torch.device]] = None,
-    model_name: str = "basic",
-    use_safetensors: bool = False,
-) -> LatentDiffusion:
+    ckpt_path=None, config=None, device=None, model_name="basic", use_safetensors=False
+):
+    profiler = Profiler()
+    profiler.start()
+
     if device is None or device == "auto":
         if torch.cuda.is_available():
             device = torch.device("cuda:0")
@@ -168,8 +159,8 @@ def build_model(
     elif isinstance(device, str):
         device = torch.device(device)
 
-    logger.info(f"Loading AudioSR: {model_name}")
-    logger.info(f"Loading model on {device}")
+    print("Loading AudioSR: %s" % model_name)
+    print("Loading model on %s" % device)
 
     # If user provided a specific path, use it. Otherwise, download/find based on name.
     if ckpt_path is None:
@@ -187,63 +178,58 @@ def build_model(
 
     # No normalization here
     latent_diffusion = LatentDiffusion(**config["model"]["params"])
-    latent_diffusion.eval()
-    latent_diffusion = latent_diffusion.to(device)
 
     # Load weights
-    logger.info(f"Loading weights from {ckpt_path}")
+    print(f"Loading weights from {ckpt_path}")
     if ckpt_path.endswith(".safetensors"):
         from safetensors.torch import load_file
 
         state_dict = load_file(ckpt_path)
         latent_diffusion.load_state_dict(state_dict, strict=False)
     else:
-        checkpoint = torch.load(
-            ckpt_path, map_location="cpu", mmap=True, weights_only=True
-        )
+        checkpoint = torch.load(ckpt_path, map_location="cpu")
         latent_diffusion.load_state_dict(checkpoint["state_dict"], strict=False)
+
+    latent_diffusion.eval()
+    latent_diffusion = latent_diffusion.to(device)
 
     # Optimization: Use torch.compile for the UNet model to benefit from kernel fusion
     # and other compiler-level optimizations. Only on PyTorch 2.0+ and CUDA/MPS.
-    torch_version = torch.__version__.split(".")
-    has_compile = int(torch_version[0]) >= 2
-    if has_compile and device.type in ["cuda", "mps"]:
-        logger.info("Compiling UNet with torch.compile...")
+    if hasattr(torch, "compile") and device.type in ["cuda", "mps"]:
+        print("Compiling UNet with torch.compile...")
         try:
             latent_diffusion.model.diffusion_model = torch.compile(
                 latent_diffusion.model.diffusion_model
             )
         except Exception as e:
-            logger.warning(f"torch.compile failed, falling back to eager mode: {e}")
+            print(f"torch.compile failed, falling back to eager mode: {e}")
+
+    profiler.stop()
+    profiler.print()
 
     return latent_diffusion
 
 
 def super_resolution(
-    latent_diffusion: LatentDiffusion,
-    input_file: str,
-    seed: int = 42,
-    ddim_steps: int = 200,
-    guidance_scale: float = 3.5,
-    latent_t_per_second: float = 12.8,
-    config: Optional[Any] = None,
-    deepcache_interval: int = 2,
-    cfg_skip_threshold: float = 0.0,
-    freeu_args: Optional[Dict[str, float]] = None,
-) -> np.ndarray:
+    latent_diffusion,
+    input_file,
+    seed=42,
+    ddim_steps=200,
+    guidance_scale=3.5,
+    latent_t_per_second=12.8,
+    config=None,
+    deepcache_interval=2,
+    cfg_skip_threshold=0.0,
+    freeu_args=None,
+):
     seed_everything(int(seed))
     waveform = None
 
     batch, duration = make_batch_for_super_resolution(input_file, waveform=waveform)
-    logger.info(f"Generating batch for duration: {duration:.2f}s")
 
     # Use inference_mode for better performance than no_grad
     # Use autocast for automatic mixed precision speedups
-    if isinstance(latent_diffusion.device, torch.device):
-        device_type = latent_diffusion.device.type
-    else:
-        device_type = str(latent_diffusion.device)
-
+    device_type = latent_diffusion.device.type
     with torch.inference_mode(), torch.autocast(device_type):
         waveform = latent_diffusion.generate_batch(
             batch,
@@ -259,15 +245,15 @@ def super_resolution(
 
 
 def super_resolution_from_waveform(
-    latent_diffusion: LatentDiffusion,
-    waveform_np: np.ndarray,
-    seed: int = 42,
-    ddim_steps: int = 200,
-    guidance_scale: float = 3.5,
-    deepcache_interval: int = 2,
-    cfg_skip_threshold: float = 0.0,
-    freeu_args: Optional[Dict[str, float]] = None,
-) -> np.ndarray:
+    latent_diffusion,
+    waveform_np,
+    seed=42,
+    ddim_steps=200,
+    guidance_scale=3.5,
+    deepcache_interval=2,
+    cfg_skip_threshold=0.0,
+    freeu_args=None,
+):
     """
     Process a single waveform directly without saving to file.
 
@@ -390,13 +376,13 @@ def _prepare_single_waveform_batch(waveform_np, target_duration, sampling_rate=4
 
 
 def super_resolution_batch(
-    latent_diffusion: LatentDiffusion,
-    waveforms_list: List[np.ndarray],
-    seed: int = 42,
-    ddim_steps: int = 200,
-    guidance_scale: float = 3.5,
-    **kwargs: Any,
-) -> List[np.ndarray]:
+    latent_diffusion,
+    waveforms_list,
+    seed=42,
+    ddim_steps=200,
+    guidance_scale=3.5,
+    **kwargs,
+):
     """
     Process multiple waveform chunks in a SINGLE forward pass (true GPU parallelism).
 
@@ -423,7 +409,7 @@ def super_resolution_batch(
     else:
         target_duration = max_duration
 
-    logger.info(
+    print(
         f"[Batch] Processing {len(waveforms_list)} chunks, target_duration={target_duration:.2f}s"
     )
 
@@ -445,16 +431,12 @@ def super_resolution_batch(
             # After stack, shape becomes [batch, time, ...] or [batch, samples]
             tensors = [b[key] for b in batch_list]
             combined_batch[key] = torch.stack(tensors, dim=0)
-            logger.debug(f"  {key}: {combined_batch[key].shape}")
+            print(f"  {key}: {combined_batch[key].shape}")
         else:
             combined_batch[key] = batch_list[0][key]
 
     # Process all chunks at once
-    if isinstance(latent_diffusion.device, torch.device):
-        device_type = latent_diffusion.device.type
-    else:
-        device_type = str(latent_diffusion.device)
-
+    device_type = latent_diffusion.device.type
     with torch.inference_mode(), torch.autocast(device_type):
         results = latent_diffusion.generate_batch(
             combined_batch,
@@ -481,15 +463,15 @@ def super_resolution_batch(
 
 
 def super_resolution_long_audio(
-    latent_diffusion: LatentDiffusion,
-    input_file: str,
-    seed: int = 42,
-    ddim_steps: int = 200,
-    guidance_scale: float = 3.5,
-    chunk_duration_s: float = 15.0,
-    overlap_duration_s: float = 2.0,
-    **kwargs: Any,
-) -> torch.Tensor:
+    latent_diffusion,
+    input_file,
+    seed=42,
+    ddim_steps=200,
+    guidance_scale=3.5,
+    chunk_duration_s=15,
+    overlap_duration_s=2,
+    **kwargs,
+):
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
     and reconstructing the full audio with cross-fading in overlap regions.
@@ -553,7 +535,7 @@ def super_resolution_long_audio(
             padding_needed = chunk_samples - current_chunk_len
             chunk_waveform = F.pad(chunk_waveform, (0, padding_needed))
 
-        logger.info(
+        print(
             f"Processing chunk from {start_sample / sr:.2f}s to {end_sample / sr:.2f}s"
         )
 
@@ -563,11 +545,7 @@ def super_resolution_long_audio(
             None, waveform=chunk_waveform.squeeze(0).numpy()
         )
 
-        if isinstance(latent_diffusion.device, torch.device):
-            device_type = latent_diffusion.device.type
-        else:
-            device_type = str(latent_diffusion.device)
-
+        device_type = latent_diffusion.device.type
         with torch.inference_mode(), torch.autocast(device_type):
             # Run inference on the single chunk
             processed_chunk = latent_diffusion.generate_batch(

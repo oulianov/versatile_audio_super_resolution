@@ -33,7 +33,6 @@ dependencies = [
     "matplotlib",
     "diffusers",
     "pyinstrument",
-    "loguru>=0.7.3",
 ]
 
 

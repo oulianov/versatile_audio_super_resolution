@@ -830,18 +830,13 @@ class LatentDiffusion(DDPM):
         return_encoder_output=False,
         unconditional_prob_cfg=0.1,
     ):
-        print(f"DEBUG: get_input start for key={k}")
         x = super().get_input(batch, k)
 
-        print(f"DEBUG: get_input - moving x to {self.device}...")
         x = x.to(self.device)
 
         if return_first_stage_encode:
-            print("DEBUG: get_input - starting encode_first_stage (VAE encoding)...")
             encoder_posterior = self.encode_first_stage(x)
-            print("DEBUG: get_input - getting first stage encoding...")
             z = self.get_first_stage_encoding(encoder_posterior).detach()
-            print("DEBUG: get_input - encode_first_stage finished.")
         else:
             z = None
         cond_dict = {}
@@ -1499,13 +1494,11 @@ class LatentDiffusion(DDPM):
 
         # with self.ema_scope("Plotting"):
         for i in range(1):
-            print("DEBUG: generate_batch - calling get_input...")
             z, c = self.get_input(
                 batch,
                 self.first_stage_key,
                 unconditional_prob_cfg=0.0,  # Do not output unconditional information in the c
             )
-            print("DEBUG: generate_batch - get_input finished.")
             # Unconditional guidance handling
             # ...
 
@@ -1515,7 +1508,6 @@ class LatentDiffusion(DDPM):
             batch_size = z.shape[0] * n_gen
 
             # Expanding conditions
-            print("DEBUG: generate_batch - expanding conditions...")
             for cond_key in c.keys():
                 if isinstance(c[cond_key], list):
                     for i in range(len(c[cond_key])):

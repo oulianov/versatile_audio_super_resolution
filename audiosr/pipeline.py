@@ -299,12 +299,10 @@ def super_resolution_from_waveform(
     target_frame = int(pad_duration * 100)
 
     # Normalize and pad
-    print("DEBUG: Normalizing and padding...")
     waveform = normalize_wav(waveform_np)
     waveform = pad_wav(waveform, target_length=int(sampling_rate * pad_duration))
 
     # Extract features
-    print("DEBUG: First feature extraction...")
     log_mel_spec, stft = wav_feature_extraction(
         torch.from_numpy(waveform), target_frame
     )
@@ -325,16 +323,13 @@ def super_resolution_from_waveform(
     )
     batch["lowpass_mel"] = lowpass_mel
 
-    print("DEBUG: Unsqueezing batch...")
-
     # Add batch dimension to all tensors
     for k in batch.keys():
-        if isinstance(batch[k], torch.Tensor):
-            batch[k] = torch.FloatTensor(batch[k]).unsqueeze(0)
+        if torch.is_tensor(batch[k]):
+            batch[k] = batch[k].unsqueeze(0)
 
     # Process
     device_type = latent_diffusion.device.type
-    print(f"DEBUG: Starting generate_batch on {device_type}...")
     with torch.inference_mode(), torch.autocast(device_type):
         result = latent_diffusion.generate_batch(
             batch,

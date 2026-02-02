@@ -21,6 +21,7 @@ from audiosr.utils import (
     read_audio_file,
     wav_feature_extraction,
 )
+from pyinstrument import Profiler
 
 
 def seed_everything(seed):
@@ -145,6 +146,9 @@ def round_up_duration(duration):
 def build_model(
     ckpt_path=None, config=None, device=None, model_name="basic", use_safetensors=False
 ):
+    profiler = Profiler()
+    profiler.start()
+
     if device is None or device == "auto":
         if torch.cuda.is_available():
             device = torch.device("cuda:0")
@@ -187,6 +191,20 @@ def build_model(
     latent_diffusion.eval()
     latent_diffusion = latent_diffusion.to(device)
 
+    # Optimization: Use torch.compile for the UNet model to benefit from kernel fusion
+    # and other compiler-level optimizations. Only on PyTorch 2.0+ and CUDA/MPS.
+    if hasattr(torch, "compile") and device.type in ["cuda", "mps"]:
+        print("Compiling UNet with torch.compile...")
+        try:
+            latent_diffusion.model.diffusion_model = torch.compile(
+                latent_diffusion.model.diffusion_model
+            )
+        except Exception as e:
+            print(f"torch.compile failed, falling back to eager mode: {e}")
+
+    profiler.stop()
+    profiler.print()
+
     return latent_diffusion
 
 
@@ -198,18 +216,27 @@ def super_resolution(
     guidance_scale=3.5,
     latent_t_per_second=12.8,
     config=None,
+    deepcache_interval=2,
+    cfg_skip_threshold=0.0,
+    freeu_args=None,
 ):
     seed_everything(int(seed))
     waveform = None
 
     batch, duration = make_batch_for_super_resolution(input_file, waveform=waveform)
 
-    with torch.no_grad():
+    # Use inference_mode for better performance than no_grad
+    # Use autocast for automatic mixed precision speedups
+    device_type = latent_diffusion.device.type
+    with torch.inference_mode(), torch.autocast(device_type):
         waveform = latent_diffusion.generate_batch(
             batch,
             unconditional_guidance_scale=guidance_scale,
             ddim_steps=ddim_steps,
             duration=duration,
+            deepcache_interval=deepcache_interval,
+            cfg_skip_threshold=cfg_skip_threshold,
+            freeu_args=freeu_args,
         )
 
     return waveform
@@ -221,6 +248,9 @@ def super_resolution_from_waveform(
     seed=42,
     ddim_steps=200,
     guidance_scale=3.5,
+    deepcache_interval=2,
+    cfg_skip_threshold=0.0,
+    freeu_args=None,
 ):
     """
     Process a single waveform directly without saving to file.
@@ -231,6 +261,9 @@ def super_resolution_from_waveform(
         seed: Random seed
         ddim_steps: Number of DDIM steps
         guidance_scale: Guidance scale for generation
+        deepcache_interval: DeepCache skipping interval (default 1 = disabled)
+        cfg_skip_threshold: CFG skipping threshold (0.0 to 1.0)
+        freeu_args: FreeU parameters (dict)
 
     Returns:
         Processed waveform as numpy array
@@ -278,12 +311,16 @@ def super_resolution_from_waveform(
             batch[k] = torch.FloatTensor(batch[k]).unsqueeze(0)
 
     # Process
-    with torch.no_grad():
+    device_type = latent_diffusion.device.type
+    with torch.inference_mode(), torch.autocast(device_type):
         result = latent_diffusion.generate_batch(
             batch,
             unconditional_guidance_scale=guidance_scale,
             ddim_steps=ddim_steps,
             duration=pad_duration,
+            deepcache_interval=deepcache_interval,
+            cfg_skip_threshold=cfg_skip_threshold,
+            freeu_args=freeu_args,
         )
 
     # Convert to numpy and trim to original length
@@ -342,6 +379,7 @@ def super_resolution_batch(
     seed=42,
     ddim_steps=200,
     guidance_scale=3.5,
+    **kwargs,
 ):
     """
     Process multiple waveform chunks in a SINGLE forward pass (true GPU parallelism).
@@ -396,12 +434,14 @@ def super_resolution_batch(
             combined_batch[key] = batch_list[0][key]
 
     # Process all chunks at once
-    with torch.no_grad():
+    device_type = latent_diffusion.device.type
+    with torch.inference_mode(), torch.autocast(device_type):
         results = latent_diffusion.generate_batch(
             combined_batch,
             unconditional_guidance_scale=guidance_scale,
             ddim_steps=ddim_steps,
             duration=target_duration,
+            **kwargs,
         )
 
     # Convert results to numpy
@@ -428,6 +468,7 @@ def super_resolution_long_audio(
     guidance_scale=3.5,
     chunk_duration_s=15,
     overlap_duration_s=2,
+    **kwargs,
 ):
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
@@ -502,13 +543,15 @@ def super_resolution_long_audio(
             None, waveform=chunk_waveform.squeeze(0).numpy()
         )
 
-        with torch.no_grad():
+        device_type = latent_diffusion.device.type
+        with torch.inference_mode(), torch.autocast(device_type):
             # Run inference on the single chunk
             processed_chunk = latent_diffusion.generate_batch(
                 batch,
                 unconditional_guidance_scale=guidance_scale,
                 ddim_steps=ddim_steps,
                 duration=duration,
+                **kwargs,
             )  # This should return a tensor
 
         # Ensure the processed chunk is a tensor

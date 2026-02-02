@@ -77,6 +77,7 @@ dependencies = [
     { name = "pandas" },
     { name = "phonemizer" },
     { name = "progressbar" },
+    { name = "pyinstrument" },
     { name = "pyyaml" },
     { name = "scipy" },
     { name = "soundfile" },
@@ -116,6 +117,7 @@ requires-dist = [
     { name = "pandas" },
     { name = "phonemizer" },
     { name = "progressbar" },
+    { name = "pyinstrument" },
     { name = "pyyaml" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "scipy" },
@@ -1206,6 +1208,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b0/77/a5b8c569bf593b0140bde72ea885a803b82086995367bf2037de0159d924/pygments-2.19.2.tar.gz", hash = "sha256:636cb2477cec7f8952536970bc533bc43743542f70392ae026374600add5b887", size = 4968631, upload-time = "2025-06-21T13:39:12.283Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/21/705964c7812476f378728bdf590ca4b771ec72385c533964653c68e86bdc/pygments-2.19.2-py3-none-any.whl", hash = "sha256:86540386c03d588bb81d44bc3928634ff26449851e99741617ecb9037ee5ec0b", size = 1225217, upload-time = "2025-06-21T13:39:07.939Z" },
+]
+
+[[package]]
+name = "pyinstrument"
+version = "5.1.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/32/7f/d3c4ef7c43f3294bd5a475dfa6f295a9fee5243c292d5c8122044fa83bcb/pyinstrument-5.1.2.tar.gz", hash = "sha256:af149d672da9493fa37334a1cc68f7b80c3e6cb9fd99b9e426c447db5c650bf0", size = 266889, upload-time = "2026-01-04T18:38:58.464Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/79/ef/0288edd620fb0cf2074d8c8e3567007a6bac66307b839d99988563de4eb8/pyinstrument-5.1.2-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:3739a05583ea6312c385eb59fe985cd20d9048e95f9eeeb6a2f6c35202e2d36e", size = 131284, upload-time = "2026-01-04T18:37:35.01Z" },
+    { url = "https://files.pythonhosted.org/packages/0b/4e/2a90a6997d9f7a39a6998d56de72e52673ebf5a9169a1c39dbf173e95105/pyinstrument-5.1.2-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:7c9ee05dc75ac5fb18498c311e624f77f7f321f7ff325b251aa09e52e46f1d6a", size = 124468, upload-time = "2026-01-04T18:37:36.628Z" },
+    { url = "https://files.pythonhosted.org/packages/04/74/7bfd403e81f9b5ec523f60cced8f516ee52312752bb2e0fafabfd90bbd78/pyinstrument-5.1.2-cp311-cp311-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:7a49a55ca5b75218767e29cacbe515d0b66fc18cb48a937bca0f77b8dafc7202", size = 148057, upload-time = "2026-01-04T18:37:37.998Z" },
+    { url = "https://files.pythonhosted.org/packages/50/3a/7205d7c199947d18edcd013af4ddf4d3cca85c5488fbe493050035947f7c/pyinstrument-5.1.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:0c45c14974ff04b1bfdc6c2a448627c6da7409c7800d0eb7bd03fb435dcb41d7", size = 146526, upload-time = "2026-01-04T18:37:39.642Z" },
+    { url = "https://files.pythonhosted.org/packages/24/e8/f6864172e7ebe4bc5209bafbc574a619b4c511b9506b941789b11441be7c/pyinstrument-5.1.2-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:22b9c04b3982c41c04b1c5ed05d1bc3a2ba26533450084058119f6dc160e70a3", size = 147179, upload-time = "2026-01-04T18:37:41.332Z" },
+    { url = "https://files.pythonhosted.org/packages/6d/04/89ef2d1c34767bfdbcc74ab0c7e0d021d7fac5e79873239e4ca26e97d6da/pyinstrument-5.1.2-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:5c4995ee0774801790c138f0dfec17d4e7a7ef09a6d56d53cbcbf0578a711021", size = 146354, upload-time = "2026-01-04T18:37:42.808Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/d4/64441547ec12391b92c739a3b0685059e7dfa088d928df8364676ef7abc7/pyinstrument-5.1.2-cp311-cp311-win32.whl", hash = "sha256:fe449e4a8ee60a2a27cf509350a584670f4c3704649601be7937598f09dbe7ca", size = 125790, upload-time = "2026-01-04T18:37:44.141Z" },
+    { url = "https://files.pythonhosted.org/packages/4d/8b/0a5f6b239294decb0ecd932711f3470bfbd42fc2e08a94cd5c1f4f6da7f1/pyinstrument-5.1.2-cp311-cp311-win_amd64.whl", hash = "sha256:3fb839429671a42bf349335af4c1ce5cf83386ac11f04df0bc40720d4cb7d77d", size = 126578, upload-time = "2026-01-04T18:37:45.423Z" },
 ]
 
 [[package]]

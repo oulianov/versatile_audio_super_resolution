@@ -320,9 +320,9 @@ class AttentionBlock(nn.Module):
         if num_head_channels == -1:
             self.num_heads = num_heads
         else:
-            assert (
-                channels % num_head_channels == 0
-            ), f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
+            assert channels % num_head_channels == 0, (
+                f"q,k,v channels {channels} is not divisible by num_head_channels {num_head_channels}"
+            )
             self.num_heads = channels // num_head_channels
         self.use_checkpoint = use_checkpoint
         self.norm = normalization(channels)
@@ -507,14 +507,14 @@ class UNetModel(nn.Module):
             num_heads_upsample = num_heads
 
         if num_heads == -1:
-            assert (
-                num_head_channels != -1
-            ), "Either num_heads or num_head_channels has to be set"
+            assert num_head_channels != -1, (
+                "Either num_heads or num_head_channels has to be set"
+            )
 
         if num_head_channels == -1:
-            assert (
-                num_heads != -1
-            ), "Either num_heads or num_head_channels has to be set"
+            assert num_heads != -1, (
+                "Either num_heads or num_head_channels has to be set"
+            )
 
         self.image_size = image_size
         self.in_channels = in_channels
@@ -557,9 +557,9 @@ class UNetModel(nn.Module):
             )
 
         if context_dim is not None and not use_spatial_transformer:
-            assert (
-                use_spatial_transformer
-            ), "Fool!! You forgot to use the spatial transformer for your cross-attention conditioning..."
+            assert use_spatial_transformer, (
+                "Fool!! You forgot to use the spatial transformer for your cross-attention conditioning..."
+            )
 
         if context_dim is not None and not isinstance(context_dim, list):
             context_dim = [context_dim]
@@ -834,6 +834,39 @@ class UNetModel(nn.Module):
         self.middle_block.apply(convert_module_to_f32)
         self.output_blocks.apply(convert_module_to_f32)
 
+    def _freeu_fft_filter(self, x, scale, threshold=1.0):
+        # x: [B, C, T, F] or [B, C, L]
+        if x.ndim == 4:
+            B, C, T, F = x.shape
+            x_fft = th.fft.fftn(x, dim=(-2, -1))
+            x_fft = th.fft.fftshift(x_fft, dim=(-2, -1))
+
+            mask = th.ones((T, F), device=x.device)
+            crow, ccol = T // 2, F // 2
+            mask[
+                crow - int(crow * threshold) : crow + int(crow * threshold),
+                ccol - int(ccol * threshold) : ccol + int(ccol * threshold),
+            ] = scale
+            x_fft = x_fft * mask[None, None, :, :]
+
+            x_fft = th.fft.ifftshift(x_fft, dim=(-2, -1))
+            x_filtered = th.fft.ifftn(x_fft, dim=(-2, -1)).real
+        else:
+            # 1D case (common in some latent audio models)
+            B, C, L = x.shape
+            x_fft = th.fft.fft(x, dim=-1)
+            x_fft = th.fft.fftshift(x_fft, dim=-1)
+
+            mask = th.ones(L, device=x.device)
+            mid = L // 2
+            mask[mid - int(mid * threshold) : mid + int(mid * threshold)] = scale
+            x_fft = x_fft * mask[None, None, :]
+
+            x_fft = th.fft.ifftshift(x_fft, dim=-1)
+            x_filtered = th.fft.ifft(x_fft, dim=-1).real
+
+        return x_filtered
+
     def forward(
         self,
         x,
@@ -841,6 +874,9 @@ class UNetModel(nn.Module):
         y=None,
         context_list=None,
         context_attn_mask_list=None,
+        freeu_args=None,
+        deepcache_skip=False,
+        deepcache_layer_idx=None,  # Index in input_blocks where to split
         **kwargs,
     ):
         """
@@ -849,6 +885,8 @@ class UNetModel(nn.Module):
         :param timesteps: a 1-D batch of timesteps.
         :param context: conditioning plugged in via crossattn
         :param y: an [N] Tensor of labels, if class-conditional. an [N, extra_film_condition_dim] Tensor if film-embed conditional
+        :param deepcache_skip: whether to skip the interior of the UNet using cached features.
+        :param deepcache_layer_idx: at which input_block index to split for caching.
         :return: an [N x C x ...] Tensor of outputs.
         """
         if not self.shape_reported:
@@ -857,7 +895,9 @@ class UNetModel(nn.Module):
 
         assert (y is not None) == (
             self.num_classes is not None or self.extra_film_condition_dim is not None
-        ), "must specify y if and only if the model is class-conditional or film embedding conditional"
+        ), (
+            "must specify y if and only if the model is class-conditional or film embedding conditional"
+        )
         hs = []
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
@@ -870,12 +910,73 @@ class UNetModel(nn.Module):
             emb = th.cat([emb, self.film_emb(y)], dim=-1)
 
         h = x.type(self.dtype)
-        for module in self.input_blocks:
-            h = module(h, emb, context_list, context_attn_mask_list)
-            hs.append(h)
-        h = self.middle_block(h, emb, context_list, context_attn_mask_list)
-        for module in self.output_blocks:
+
+        if deepcache_skip and getattr(self, "_deepcache_cache", None) is not None:
+            # Fast pass: only process shallow input blocks
+            for i in range(deepcache_layer_idx):
+                h = self.input_blocks[i](h, emb, context_list, context_attn_mask_list)
+                hs.append(h)
+
+            # Load cached deep features
+            h = self._deepcache_cache["h"]
+            # Important: hs_part should contain hs[deepcache_layer_idx:]
+            hs.extend(self._deepcache_cache["hs_part"])
+
+            # Start from the corresponding shallow output block
+            start_output_idx = len(self.output_blocks) - deepcache_layer_idx
+        else:
+            # Full pass
+            for i, module in enumerate(self.input_blocks):
+                h = module(h, emb, context_list, context_attn_mask_list)
+                hs.append(h)
+
+            h = self.middle_block(h, emb, context_list, context_attn_mask_list)
+
+            if deepcache_layer_idx is not None:
+                # Cache the state after processing the "deep" part of the UNet
+                mid_output_idx = len(self.output_blocks) - deepcache_layer_idx
+                for i in range(mid_output_idx):
+                    concate_tensor = hs.pop()
+                    h = th.cat([h, concate_tensor], dim=1)
+                    h = self.output_blocks[i](
+                        h, emb, context_list, context_attn_mask_list
+                    )
+
+                # Store cache: intermediate latent h and the shallow skip connections
+                self._deepcache_cache = {
+                    "h": h.detach(),
+                    "hs_part": [t.detach() for t in hs[deepcache_layer_idx:]],
+                }
+                start_output_idx = mid_output_idx
+            else:
+                start_output_idx = 0
+
+        # FreeU parameters extraction
+        if freeu_args is not None:
+            b1, b2, s1, s2 = (
+                freeu_args.get("b1", 1.0),
+                freeu_args.get("b2", 1.0),
+                freeu_args.get("s1", 1.0),
+                freeu_args.get("s2", 1.0),
+            )
+        else:
+            b1, b2, s1, s2 = 1.0, 1.0, 1.0, 1.0
+
+        for i in range(start_output_idx, len(self.output_blocks)):
+            module = self.output_blocks[i]
             concate_tensor = hs.pop()
+
+            # FreeU logic: Scale backbone and skip features for early upsampling stages
+            if freeu_args is not None:
+                # Level 3 (lowest res) and Level 2 in 4-level UNet
+                # Assuming standard AudioSR structure with 3 blocks per level
+                if i < (self.num_res_blocks + 1):  # Level 3 (8x down)
+                    h[:, : h.shape[1] // 2] = h[:, : h.shape[1] // 2] * b1
+                    concate_tensor = self._freeu_fft_filter(concate_tensor, s1)
+                elif i < 2 * (self.num_res_blocks + 1):  # Level 2 (4x down)
+                    h[:, : h.shape[1] // 2] = h[:, : h.shape[1] // 2] * b2
+                    concate_tensor = self._freeu_fft_filter(concate_tensor, s2)
+
             h = th.cat([h, concate_tensor], dim=1)
             h = module(h, emb, context_list, context_attn_mask_list)
         h = h.type(x.dtype)

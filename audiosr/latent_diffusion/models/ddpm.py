@@ -213,9 +213,9 @@ class DDPM(nn.Module):
         self.num_timesteps = int(timesteps)
         self.linear_start = linear_start
         self.linear_end = linear_end
-        assert (
-            alphas_cumprod.shape[0] == self.num_timesteps
-        ), "alphas have to be defined for each timestep"
+        assert alphas_cumprod.shape[0] == self.num_timesteps, (
+            "alphas have to be defined for each timestep"
+        )
 
         to_torch = partial(torch.tensor, dtype=torch.float32)
 
@@ -233,10 +233,12 @@ class DDPM(nn.Module):
             "log_one_minus_alphas_cumprod", to_torch(np.log(1.0 - alphas_cumprod))
         )
         self.register_buffer(
-            "sqrt_recip_alphas_cumprod", to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon)))
+            "sqrt_recip_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon))),
         )
         self.register_buffer(
-            "sqrt_recipm1_alphas_cumprod", to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon) - 1))
+            "sqrt_recipm1_alphas_cumprod",
+            to_torch(np.sqrt(1.0 / (alphas_cumprod + epsilon) - 1)),
         )
 
         # calculations for posterior q(x_{t-1} | x_t, x_0)
@@ -916,16 +918,17 @@ class LatentDiffusion(DDPM):
         return decoding
 
     def mel_spectrogram_to_waveform(
-        self, mel, savepath=".", bs=None, name="outwav", save=True
+        self, mel, savepath=".", bs=None, name="outwav", save=True, return_numpy=True
     ):
         # Mel: [bs, 1, t-steps, fbins]
         if len(mel.size()) == 4:
             mel = mel.squeeze(1)
         mel = mel.permute(0, 2, 1)
         waveform = self.first_stage_model.vocoder(mel)
-        waveform = waveform.cpu().detach().numpy()
-        if save:
-            self.save_waveform(waveform, savepath, name)
+        if return_numpy:
+            waveform = waveform.cpu().detach().numpy()
+            if save:
+                self.save_waveform(waveform, savepath, name)
         return waveform
 
     def encode_first_stage(self, x):
@@ -1022,10 +1025,12 @@ class LatentDiffusion(DDPM):
             new_cond_dict[key] = cond_dict[key]
         return new_cond_dict
 
-    def apply_model(self, x_noisy, t, cond, return_ids=False):
+    def apply_model(self, x_noisy, t, cond, return_ids=False, **kwargs):
         cond = self.reorder_cond_dict(cond)
 
-        x_recon = self.model(x_noisy, t, cond_dict=cond)
+        # Pass specific optimizations (DeepCache, FreeU etc.) down to DiffusionWrapper
+        # and then to the UNet.
+        x_recon = self.model(x_noisy, t, cond_dict=cond, **kwargs)
 
         if isinstance(x_recon, tuple) and not return_ids:
             return x_recon[0]
@@ -1425,7 +1430,7 @@ class LatentDiffusion(DDPM):
 
         intermediate = None
         if ddim and not use_plms:
-            ddim_sampler = DDIMSampler(self, device=self.device)
+            ddim_sampler = DDIMSampler(self, device=self.device, **kwargs)
             samples, intermediates = ddim_sampler.sample(
                 ddim_steps,
                 batch_size,
@@ -1537,74 +1542,113 @@ class LatentDiffusion(DDPM):
             mel = self.mel_replace_ops(mel, super().get_input(batch, "lowpass_mel"))
 
             waveform = self.mel_spectrogram_to_waveform(
-                mel, savepath="", bs=None, save=False
+                mel, savepath="", bs=None, save=False, return_numpy=False
             )
 
             waveform_lowpass = super().get_input(batch, "waveform_lowpass")
             waveform = self.postprocessing(waveform, waveform_lowpass)
 
-            max_amp = np.max(np.abs(waveform), axis=-1)
-            waveform = 0.5 * waveform / max_amp[..., None]
-            mean_amp = np.mean(waveform, axis=-1)[..., None]
-            waveform = waveform - mean_amp
+            max_amp = torch.max(torch.abs(waveform), dim=-1, keepdim=True).values
+            waveform = 0.5 * waveform / (max_amp + 1e-8)
+            mean_amp = torch.mean(waveform, dim=-1, keepdim=True)
+            waveform = (waveform - mean_amp).cpu().detach().numpy()
 
             return waveform
 
     def _locate_cutoff_freq(self, stft, percentile=0.985):
-        def _find_cutoff(x, percentile=0.95):
-            percentile = x[-1] * percentile
-            for i in range(1, x.shape[0]):
-                if x[-i] < percentile:
-                    return x.shape[0] - i
-            return 0
-
+        # stft: (B, T, F) or (B, 1, T, F)
+        if stft.ndim == 4:
+            stft = stft.squeeze(1)
         magnitude = torch.abs(stft)
-        energy = torch.cumsum(torch.sum(magnitude, dim=0), dim=0)
-        return _find_cutoff(energy, percentile)
+        energy = torch.cumsum(torch.sum(magnitude, dim=1), dim=1)  # (B, F)
+        threshold = energy[:, -1:] * percentile
+        # Find first index where energy >= threshold
+        cutoff_bins = (energy >= threshold).argmax(dim=1)
+        return cutoff_bins
 
     def mel_replace_ops(self, samples, input):
-        for i in range(samples.size(0)):
-            cutoff_melbin = self._locate_cutoff_freq(torch.exp(input[i]))
-
-            # ratio = samples[i][...,:cutoff_melbin]/input[i][...,:cutoff_melbin]
-            # print(torch.mean(ratio), torch.max(ratio), torch.min(ratio))
-
-            samples[i][..., :cutoff_melbin] = input[i][..., :cutoff_melbin]
+        # samples: (B, 1, T, F), input: (B, 1, T, F)
+        cutoff_bins = self._locate_cutoff_freq(torch.exp(input))
+        B, C, T, F = samples.shape
+        mask = torch.arange(F, device=samples.device).view(
+            1, 1, 1, F
+        ) < cutoff_bins.view(B, 1, 1, 1)
+        samples = torch.where(mask, input, samples)
         return samples
 
     def postprocessing(self, out_batch, x_batch):  # x is target
-        # Replace the low resolution part with the ground truth
-        for i in range(out_batch.shape[0]):
-            out = out_batch[i, 0]
-            x = x_batch[i, 0].cpu().numpy()
-            cutoffratio = self._get_cutoff_index_np(x)
+        # out_batch: (B, 1, T), x_batch: (B, 1, T)
+        # Ensure input is tensor
+        if isinstance(out_batch, np.ndarray):
+            out_batch = torch.from_numpy(out_batch).to(self.device).float()
+        if isinstance(x_batch, np.ndarray):
+            x_batch = torch.from_numpy(x_batch).to(self.device).float()
 
-            length = out.shape[0]
-            stft_gt = librosa.stft(x)
+        B, C, T = out_batch.shape
+        out = out_batch.squeeze(1)
+        x = x_batch.squeeze(1).to(out.device)
 
-            stft_out = librosa.stft(out)
-            energy_ratio = np.mean(
-                np.sum(np.abs(stft_gt[cutoffratio]))
-                / np.sum(np.abs(stft_out[cutoffratio, ...]))
-            )
-            energy_ratio = min(max(energy_ratio, 0.8), 1.2)
-            stft_out[:cutoffratio, ...] = stft_gt[:cutoffratio, ...] / energy_ratio
+        # STFT params matching librosa defaults
+        n_fft = 2048
+        hop_length = 512
+        window = torch.hann_window(n_fft, device=out.device)
 
-            out_renewed = librosa.istft(stft_out, length=length)
-            out_batch[i] = out_renewed
-        return out_batch
+        cutoff_indices, stft_gt = self._get_cutoff_index_torch(x)
 
-    def _find_cutoff_np(self, x, threshold=0.95):
-        threshold = x[-1] * threshold
-        for i in range(1, x.shape[0]):
-            if x[-i] < threshold:
-                return x.shape[0] - i
-        return 0
+        stft_out = torch.stft(
+            out,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            window=window,
+            return_complex=True,
+            center=True,
+        )
 
-    def _get_cutoff_index_np(self, x):
-        stft_x = np.abs(librosa.stft(x))
-        energy = np.cumsum(np.sum(stft_x, axis=-1))
-        return self._find_cutoff_np(energy, 0.985)
+        # energy_ratio: (B,)
+        m_gt = torch.abs(stft_gt)
+        m_out = torch.abs(stft_out)
+        energy_gt = m_gt[torch.arange(B), cutoff_indices, :].sum(dim=-1)
+        energy_out = m_out[torch.arange(B), cutoff_indices, :].sum(dim=-1)
+
+        energy_ratio = energy_gt / (energy_out + 1e-8)
+        energy_ratio = energy_ratio.clamp(0.8, 1.2).view(B, 1, 1)
+
+        # Replacement mask: (B, F, 1)
+        F = stft_out.shape[1]
+        freq_indices = torch.arange(F, device=out.device).view(1, F, 1)
+        mask = freq_indices < cutoff_indices.view(B, 1, 1)
+
+        stft_out = torch.where(mask, stft_gt / energy_ratio, stft_out)
+
+        out_renewed = torch.istft(
+            stft_out,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            window=window,
+            length=T,
+            center=True,
+        )
+        return out_renewed.unsqueeze(1)
+
+    def _get_cutoff_index_torch(self, x):
+        # x: (B, T)
+        n_fft = 2048
+        hop_length = 512
+        window = torch.hann_window(n_fft, device=x.device)
+        stft_x = torch.stft(
+            x,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            window=window,
+            return_complex=True,
+            center=True,
+        )
+        magnitude = torch.abs(stft_x)
+        # energy: (B, F)
+        energy = torch.cumsum(torch.sum(magnitude, dim=-1), dim=-1)
+        threshold = energy[:, -1:] * 0.985
+        cutoff_indices = (energy >= threshold).argmax(dim=-1)
+        return cutoff_indices, stft_x
 
 
 class DiffusionWrapper(nn.Module):
@@ -1682,7 +1726,12 @@ class DiffusionWrapper(nn.Module):
                 raise NotImplementedError()
 
         out = self.diffusion_model(
-            xc, t, context_list=context_list, y=y, context_attn_mask_list=attn_mask_list
+            xc,
+            t,
+            context_list=context_list,
+            y=y,
+            context_attn_mask_list=attn_mask_list,
+            **kwargs,
         )
         return out
 

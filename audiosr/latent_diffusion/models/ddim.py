@@ -18,12 +18,27 @@ torch.backends.cudnn.allow_tf32 = True
 
 
 class DDIMSampler(object):
-    def __init__(self, model, schedule="linear", device=torch.device("cuda"), **kwargs):
+    def __init__(
+        self,
+        model,
+        schedule="linear",
+        device=torch.device("cuda"),
+        deepcache_interval=2,
+        deepcache_layer_idx=None,
+        cfg_skip_threshold=0.0,
+        freeu_args=None,
+        **kwargs,
+    ):
         super().__init__()
         self.model = model
         self.ddpm_num_timesteps = model.num_timesteps
         self.schedule = schedule
         self.device = device
+        self.deepcache_interval = deepcache_interval
+        # Sensible default for deepcache_layer_idx if none provided (around the middle)
+        self.deepcache_layer_idx = deepcache_layer_idx or 4
+        self.cfg_skip_threshold = cfg_skip_threshold
+        self.freeu_args = freeu_args
 
     def register_buffer(self, name, attr):
         if type(attr) == torch.Tensor:
@@ -253,11 +268,20 @@ class DDIMSampler(object):
                 assert len(ucg_schedule) == len(time_range)
                 unconditional_guidance_scale = ucg_schedule[i]
 
+            # DeepCache logic: Determine if this step should skip or cache
+            deepcache_skip = False
+            if self.deepcache_interval > 1:
+                if i % self.deepcache_interval == 0:
+                    deepcache_skip = False  # Full step (caching)
+                else:
+                    deepcache_skip = True  # Skip step (recycling)
+
             outs = self.p_sample_ddim(
                 img,
                 cond,
                 ts,
                 index=index,
+                total_steps=total_steps,
                 use_original_steps=ddim_use_original_steps,
                 quantize_denoised=quantize_denoised,
                 temperature=temperature,
@@ -267,6 +291,7 @@ class DDIMSampler(object):
                 unconditional_guidance_scale=unconditional_guidance_scale,
                 unconditional_conditioning=unconditional_conditioning,
                 dynamic_threshold=dynamic_threshold,
+                deepcache_skip=deepcache_skip,
             )
             img, pred_x0 = outs
             if callback:
@@ -287,6 +312,7 @@ class DDIMSampler(object):
         c,
         t,
         index,
+        total_steps=None,
         repeat_noise=False,
         use_original_steps=False,
         quantize_denoised=False,
@@ -297,27 +323,57 @@ class DDIMSampler(object):
         unconditional_guidance_scale=1.0,
         unconditional_conditioning=None,
         dynamic_threshold=None,
+        deepcache_skip=False,
     ):
         b, *_, device = *x.shape, x.device
 
         if unconditional_conditioning is None or unconditional_guidance_scale == 1.0:
-            model_output = self.model.apply_model(x, t, c)
+            model_output = self.model.apply_model(
+                x,
+                t,
+                c,
+                deepcache_skip=deepcache_skip,
+                deepcache_layer_idx=self.deepcache_layer_idx,
+                freeu_args=self.freeu_args,
+            )
         else:
-            x_in = x
-            t_in = t
+            # Dynamic CFG Skipping: Skip unconditional pass in late denoising stages
+            # index goes from total_steps-1 to 0.
+            # Denoising is finished at index=0.
+            skip_cfg = False
+            if total_steps is not None and self.cfg_skip_threshold > 0:
+                if index < total_steps * (1.0 - self.cfg_skip_threshold):
+                    skip_cfg = True
 
-            assert isinstance(c, dict)
-            assert isinstance(unconditional_conditioning, dict)
-
-            model_t = self.model.apply_model(x_in, t_in, c)
-
-            model_uncond = self.model.apply_model(
-                x_in, t_in, unconditional_conditioning
-            )
-
-            model_output = model_uncond + unconditional_guidance_scale * (
-                model_t - model_uncond
-            )
+            if skip_cfg:
+                model_output = self.model.apply_model(
+                    x,
+                    t,
+                    c,
+                    deepcache_skip=deepcache_skip,
+                    deepcache_layer_idx=self.deepcache_layer_idx,
+                    freeu_args=self.freeu_args,
+                )
+            else:
+                model_t = self.model.apply_model(
+                    x,
+                    t,
+                    c,
+                    deepcache_skip=deepcache_skip,
+                    deepcache_layer_idx=self.deepcache_layer_idx,
+                    freeu_args=self.freeu_args,
+                )
+                model_uncond = self.model.apply_model(
+                    x,
+                    t,
+                    unconditional_conditioning,
+                    deepcache_skip=deepcache_skip,
+                    deepcache_layer_idx=self.deepcache_layer_idx,
+                    freeu_args=self.freeu_args,
+                )
+                model_output = model_uncond + unconditional_guidance_scale * (
+                    model_t - model_uncond
+                )
 
         if self.model.parameterization == "v":
             e_t = self.model.predict_eps_from_z_and_v(x, t, model_output)
@@ -403,7 +459,7 @@ class DDIMSampler(object):
 
         x_next = x0
         intermediates = []
-        inter_steps: list[Unknown] = []
+        inter_steps: list[int] = []
         for i in tqdm(range(num_steps), desc="Encoding Image"):
             t = torch.full(
                 (x0.shape[0],), i, device=self.model.device, dtype=torch.long

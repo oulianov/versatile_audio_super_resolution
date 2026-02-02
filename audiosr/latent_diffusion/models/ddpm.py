@@ -1464,9 +1464,8 @@ class LatentDiffusion(DDPM):
         unconditional_guidance_scale=1.0,
         ddim_steps=200,
         n_gen=1,
-        x_T=None,
         use_ddim=True,
-        ddim_eta=1.0,
+        ddim_eta=0.0,
         use_plms=False,
         duration=None,
         cutoff_freq=None,  # 12000Hz default will be handled in postprocessing if None

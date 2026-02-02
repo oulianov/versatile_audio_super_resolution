@@ -299,10 +299,12 @@ def super_resolution_from_waveform(
     target_frame = int(pad_duration * 100)
 
     # Normalize and pad
+    print("DEBUG: Normalizing and padding...")
     waveform = normalize_wav(waveform_np)
     waveform = pad_wav(waveform, target_length=int(sampling_rate * pad_duration))
 
     # Extract features
+    print("DEBUG: First feature extraction...")
     log_mel_spec, stft = wav_feature_extraction(
         torch.from_numpy(waveform), target_frame
     )
@@ -314,12 +316,16 @@ def super_resolution_from_waveform(
         "sampling_rate": sampling_rate,
     }
 
+    print("DEBUG: Lowpass filtering...")
     batch.update(lowpass_filtering_prepare_inference(batch))
 
+    print("DEBUG: Second feature extraction (lowpass)...")
     lowpass_mel, lowpass_stft = wav_feature_extraction(
         batch["waveform_lowpass"], target_frame
     )
     batch["lowpass_mel"] = lowpass_mel
+
+    print("DEBUG: Unsqueezing batch...")
 
     # Add batch dimension to all tensors
     for k in batch.keys():

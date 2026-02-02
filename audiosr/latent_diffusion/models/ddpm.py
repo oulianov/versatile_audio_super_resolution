@@ -1564,8 +1564,7 @@ class LatentDiffusion(DDPM):
         energy = torch.cumsum(torch.sum(magnitude, dim=1), dim=1)  # (B, F)
         threshold = energy[:, -1:] * percentile
         # Find first index where energy >= threshold
-        # Find first index where energy >= threshold
-        cutoff_bins = (energy >= threshold).long().argmax(dim=1)
+        cutoff_bins = (energy >= threshold).argmax(dim=1)
         return cutoff_bins
 
     def mel_replace_ops(self, samples, input):

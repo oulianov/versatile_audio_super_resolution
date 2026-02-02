@@ -19,10 +19,8 @@ def optimize_and_push(input_path, repo_id, push_to_hub=True):
     print(f"Optimizing weights to FP16...")
     new_state_dict = {}
     for key, tensor in state_dict.items():
-        if isinstance(tensor, torch.Tensor):
-            if tensor.is_floating_point():
-                tensor = tensor.half()
-            new_state_dict[key] = tensor.contiguous()
+        if isinstance(tensor, torch.Tensor) and tensor.is_floating_point():
+            new_state_dict[key] = tensor.half()
         else:
             new_state_dict[key] = tensor
 
@@ -59,8 +57,15 @@ def optimize_and_push(input_path, repo_id, push_to_hub=True):
 
 
 if __name__ == "__main__":
-    optimize_and_push(
-        "/Users/nicolasoulianov/synth/audiosr_basic/pytorch_model.bin",
-        "oulianov/audio-sr",
-        True,
+    parser = argparse.ArgumentParser(
+        description="Optimize AudioSR model and push to HF"
     )
+    parser.add_argument("input_path", type=str, help="Path to input .bin or .ckpt file")
+    parser.add_argument(
+        "--repo", type=str, default="oulianov/audio-sr", help="HF Repo ID"
+    )
+    parser.add_argument("--no-push", action="store_true", help="Don't push to hub")
+
+    args = parser.parse_args()
+
+    optimize_and_push(args.input_path, args.repo, not args.no_push)

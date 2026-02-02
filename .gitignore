@@ -9,4 +9,3 @@ build*
 *.wav
 dist/
 *DS_Store*
-*.safetensors

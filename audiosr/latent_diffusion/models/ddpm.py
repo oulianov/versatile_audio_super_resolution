@@ -1571,6 +1571,7 @@ class LatentDiffusion(DDPM):
 
     def mel_replace_ops(self, samples, input):
         # samples: (B, 1, T, F), input: (B, 1, T, F)
+        input = input.to(samples.device)
         cutoff_bins = self._locate_cutoff_freq(torch.exp(input))
         B, C, T, F = samples.shape
         mask = torch.arange(F, device=samples.device).view(

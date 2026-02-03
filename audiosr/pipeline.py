@@ -207,6 +207,10 @@ def super_resolution(
     latent_t_per_second=12.8,
     config=None,
 ):
+    from pyinstrument import Profiler
+
+    profiler = Profiler()
+    profiler.start()
     seed_everything(int(seed))
     waveform = None
 
@@ -219,6 +223,9 @@ def super_resolution(
             ddim_steps=ddim_steps,
             duration=duration,
         )
+
+    profiler.stop()
+    print(profiler.output_text(unicode=True, color=True))
 
     return waveform
 
@@ -367,6 +374,11 @@ def super_resolution_batch(
     if len(waveforms_list) == 0:
         return []
 
+    from pyinstrument import Profiler
+
+    profiler = Profiler()
+    profiler.start()
+
     seed_everything(int(seed))
     sampling_rate = 48000
 
@@ -425,6 +437,9 @@ def super_resolution_batch(
             result = result[:orig_len]
         output_list.append(result)
 
+    profiler.stop()
+    print(profiler.output_text(unicode=True, color=True))
+
     return output_list
 
 
@@ -441,6 +456,12 @@ def super_resolution_long_audio(
     Processes a long audio file by chunking it, running super-resolution on each chunk,
     and reconstructing the full audio with cross-fading in overlap regions.
     """
+
+    from pyinstrument import Profiler
+
+    profiler = Profiler()
+    profiler.start()
+
     seed_everything(int(seed))
 
     if chunk_duration_s <= overlap_duration_s:
@@ -568,5 +589,8 @@ def super_resolution_long_audio(
 
     # Clamp the final output to avoid clipping
     final_waveform = torch.clamp(final_waveform, -1.0, 1.0)
+
+    profiler.stop()
+    print(profiler.output_text(unicode=True, color=True))
 
     return final_waveform.squeeze(0)  # Remove batch dimension before saving

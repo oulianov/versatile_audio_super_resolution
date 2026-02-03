@@ -676,16 +676,10 @@ class LatentDiffusion(DDPM):
         self.model.scale_factor = self.scale_factor
 
         # Only instantiate submodels if not on meta device
-        if not self._is_meta:
-            self.instantiate_first_stage(first_stage_config)
-            self.unconditional_prob_cfg = unconditional_prob_cfg
-            self.cond_stage_models = nn.ModuleList([])
-            self.instantiate_cond_stage(cond_stage_config)
-        else:
-            # On meta device, just create placeholders
-            self.first_stage_model = None
-            self.unconditional_prob_cfg = unconditional_prob_cfg
-            self.cond_stage_models = nn.ModuleList([])
+        self.instantiate_first_stage(first_stage_config)
+        self.unconditional_prob_cfg = unconditional_prob_cfg
+        self.cond_stage_models = nn.ModuleList([])
+        self.instantiate_cond_stage(cond_stage_config)
 
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False

@@ -149,6 +149,7 @@ def build_model(
 
     profiler = Profiler()
     profiler.start()
+
     if device is None or device == "auto":
         if torch.cuda.is_available():
             device = torch.device("cuda:0")
@@ -160,7 +161,6 @@ def build_model(
     print("Loading AudioSR: %s" % model_name)
     print("Loading model on %s" % device)
 
-    # If user provided a specific path, use it. Otherwise, download/find based on name.
     if ckpt_path is None:
         ckpt_path = download_checkpoint(model_name, use_safetensors=use_safetensors)
 
@@ -170,27 +170,37 @@ def build_model(
     else:
         config = default_audioldm_config(model_name)
 
-    # # Use text as condition instead of using waveform during training
     config["model"]["params"]["device"] = device
     config["model"]["params"]["use_ema"] = False
-    # config["model"]["params"]["cond_stage_key"] = "text"
 
-    # No normalization here
-    latent_diffusion = LatentDiffusion(**config["model"]["params"])
-
-    # Load weights
+    # OPTIMIZATION 1: Load weights first to get shape info
     print(f"Loading weights from {ckpt_path}")
     if ckpt_path.endswith(".safetensors"):
         from safetensors.torch import load_file
 
-        state_dict = load_file(ckpt_path)
-        latent_diffusion.load_state_dict(state_dict, strict=False)
+        # Load to CPU first, then move to device with model
+        state_dict = load_file(ckpt_path, device="cpu")
     else:
-        checkpoint = torch.load(ckpt_path, map_location="cpu")
-        latent_diffusion.load_state_dict(checkpoint["state_dict"], strict=False)
+        # OPTIMIZATION 2: Use mmap for PyTorch files (PyTorch 2.0+)
+        checkpoint = torch.load(ckpt_path, map_location="cpu", mmap=True)
+        state_dict = checkpoint["state_dict"]
+
+    # OPTIMIZATION 3: Initialize model on meta device (no memory allocation)
+    # This avoids creating parameters that are immediately overwritten
+    print("Initializing model structure...")
+    with torch.device("meta"):
+        latent_diffusion = LatentDiffusion(**config["model"]["params"])
+
+    # OPTIMIZATION 4: Load state dict with assign=True (PyTorch 2.0+)
+    # This avoids copying into pre-allocated tensors
+    missing_keys, unexpected_keys = latent_diffusion.load_state_dict(
+        state_dict, strict=False, assign=True
+    )
+
+    # Now materialize the model on the target device
+    latent_diffusion = latent_diffusion.to(device, dtype=torch.float32)
 
     latent_diffusion.eval()
-    latent_diffusion = latent_diffusion.to(device)
 
     profiler.stop()
     print(profiler.output_text(unicode=True, color=True))

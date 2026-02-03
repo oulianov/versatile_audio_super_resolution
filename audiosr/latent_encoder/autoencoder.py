@@ -30,7 +30,6 @@ class AutoencoderKL(nn.Module):
         image_key="fbank",
         colorize_nlabels=None,
         monitor=None,
-        monitor=None,
         base_learning_rate=1e-5,
         skip_vocoder=False,  # Optimization
     ):

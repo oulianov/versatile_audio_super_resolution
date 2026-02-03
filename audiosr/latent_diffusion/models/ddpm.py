@@ -627,6 +627,8 @@ class LatentDiffusion(DDPM):
 
         ckpt_path = kwargs.pop("ckpt_path", None)
         ignore_keys = kwargs.pop("ignore_keys", [])
+        # Check if we're on meta device
+        self._is_meta = torch.empty(0).device.type == "meta"
         super().__init__(conditioning_key=conditioning_key, *args, **kwargs)
 
         self.optimize_ddpm_parameter = optimize_ddpm_parameter
@@ -646,17 +648,28 @@ class LatentDiffusion(DDPM):
             self.scale_factor = scale_factor
         else:
             self.register_buffer("scale_factor", torch.tensor(scale_factor))
+
         self.model.scale_factor = self.scale_factor
-        self.instantiate_first_stage(first_stage_config)
-        self.unconditional_prob_cfg = unconditional_prob_cfg
-        self.cond_stage_models = nn.ModuleList([])
-        self.instantiate_cond_stage(cond_stage_config)
+
+        # Only instantiate submodels if not on meta device
+        if not self._is_meta:
+            self.instantiate_first_stage(first_stage_config)
+            self.unconditional_prob_cfg = unconditional_prob_cfg
+            self.cond_stage_models = nn.ModuleList([])
+            self.instantiate_cond_stage(cond_stage_config)
+        else:
+            # On meta device, just create placeholders
+            self.first_stage_model = None
+            self.unconditional_prob_cfg = unconditional_prob_cfg
+            self.cond_stage_models = nn.ModuleList([])
+
         self.cond_stage_forward = cond_stage_forward
         self.clip_denoised = False
         self.bbox_tokenizer = None
         self.conditional_dry_run_finished = False
         self.restarted_from_ckpt = False
-        if ckpt_path is not None:
+
+        if ckpt_path is not None and not self._is_meta:
             self.init_from_ckpt(ckpt_path, ignore_keys)
             self.restarted_from_ckpt = True
 

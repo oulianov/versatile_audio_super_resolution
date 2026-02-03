@@ -173,33 +173,32 @@ def build_model(
     config["model"]["params"]["device"] = device
     config["model"]["params"]["use_ema"] = False
 
-    # OPTIMIZATION 1: Load weights first to get shape info
+    # Load weights first
     print(f"Loading weights from {ckpt_path}")
     if ckpt_path.endswith(".safetensors"):
         from safetensors.torch import load_file
 
-        # Load to CPU first, then move to device with model
         state_dict = load_file(ckpt_path, device="cpu")
     else:
-        # OPTIMIZATION 2: Use mmap for PyTorch files (PyTorch 2.0+)
         checkpoint = torch.load(ckpt_path, map_location="cpu", mmap=True)
         state_dict = checkpoint["state_dict"]
 
-    # OPTIMIZATION 3: Initialize model on meta device (no memory allocation)
-    # This avoids creating parameters that are immediately overwritten
+    # Initialize on meta device
     print("Initializing model structure...")
     with torch.device("meta"):
         latent_diffusion = LatentDiffusion(**config["model"]["params"])
 
-    # OPTIMIZATION 4: Load state dict with assign=True (PyTorch 2.0+)
-    # This avoids copying into pre-allocated tensors
-    missing_keys, unexpected_keys = latent_diffusion.load_state_dict(
-        state_dict, strict=False, assign=True
-    )
+    # Materialize to CPU first (allocate storage), then copy data
+    print("Materializing model...")
+    latent_diffusion = latent_diffusion.to_empty(device="cpu")
 
-    # Now materialize the model on the target device
-    latent_diffusion = latent_diffusion.to(device, dtype=torch.float32)
+    # Now load state dict normally (tensors are allocated, we copy data into them)
+    print("Loading state dict...")
+    missing, unexpected = latent_diffusion.load_state_dict(state_dict, strict=False)
+    print(f"Loaded with {len(missing)} missing, {len(unexpected)} unexpected keys")
 
+    # Move to target device
+    latent_diffusion = latent_diffusion.to(device)
     latent_diffusion.eval()
 
     profiler.stop()

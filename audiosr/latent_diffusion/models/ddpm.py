@@ -184,6 +184,30 @@ class DDPM(nn.Module):
         linear_end=2e-2,
         cosine_s=8e-3,
     ):
+        # HACK: Skip computation on meta device - state_dict has these buffers anyway
+        if str(self.device) == "meta" or (
+            hasattr(torch, "_C") and torch.empty(0).device.type == "meta"
+        ):
+            self.num_timesteps = timesteps
+            # Minimal dummy registration - state_dict will overwrite
+            for name in [
+                "betas",
+                "alphas_cumprod",
+                "alphas_cumprod_prev",
+                "sqrt_alphas_cumprod",
+                "sqrt_one_minus_alphas_cumprod",
+                "log_one_minus_alphas_cumprod",
+                "sqrt_recip_alphas_cumprod",
+                "sqrt_recipm1_alphas_cumprod",
+                "posterior_variance",
+                "posterior_log_variance_clipped",
+                "posterior_mean_coef1",
+                "posterior_mean_coef2",
+                "lvlb_weights",
+            ]:
+                self.register_buffer(name, torch.empty(timesteps))
+            return
+
         if exists(given_betas):
             betas = given_betas
         else:

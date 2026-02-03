@@ -31,7 +31,6 @@ class AutoencoderKL(nn.Module):
         colorize_nlabels=None,
         monitor=None,
         base_learning_rate=1e-5,
-        skip_vocoder=False,  # Optimization
     ):
         super().__init__()
         self.automatic_optimization = False
@@ -54,7 +53,7 @@ class AutoencoderKL(nn.Module):
         self.quant_conv = torch.nn.Conv2d(2 * ddconfig["z_channels"], 2 * embed_dim, 1)
         self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
-        if self.image_key == "fbank" and not skip_vocoder:
+        if self.image_key == "fbank":
             self.vocoder = get_vocoder(None, "cpu", num_mel)
         self.embed_dim = embed_dim
         if colorize_nlabels is not None:

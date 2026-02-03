@@ -145,6 +145,10 @@ def round_up_duration(duration):
 def build_model(
     ckpt_path=None, config=None, device=None, model_name="basic", use_safetensors=False
 ):
+    from pyinstrument import Profiler
+
+    profiler = Profiler()
+    profiler.start()
     if device is None or device == "auto":
         if torch.cuda.is_available():
             device = torch.device("cuda:0")
@@ -187,6 +191,9 @@ def build_model(
 
     latent_diffusion.eval()
     latent_diffusion = latent_diffusion.to(device)
+
+    profiler.stop()
+    print(profiler.output_text(unicode=True, color=True))
 
     return latent_diffusion
 

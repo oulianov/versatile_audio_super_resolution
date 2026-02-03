@@ -742,6 +742,12 @@ class LatentDiffusion(DDPM):
             self.make_cond_schedule()
 
     def instantiate_first_stage(self, config):
+        # Optimization: Skip vocoder in first stage (AutoencoderKL) init
+        # We only need encoding/decoding, not vocoding mels during init
+        if "params" not in config:
+            config["params"] = {}
+        config["params"]["skip_vocoder"] = True
+
         model = instantiate_from_config(config)
         self.first_stage_model = model.eval()
         self.first_stage_model.train = disabled_train

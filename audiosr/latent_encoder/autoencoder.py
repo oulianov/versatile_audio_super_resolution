@@ -30,13 +30,15 @@ class AutoencoderKL(nn.Module):
         image_key="fbank",
         colorize_nlabels=None,
         monitor=None,
+        monitor=None,
         base_learning_rate=1e-5,
+        skip_vocoder=False,  # Optimization
     ):
         super().__init__()
         self.automatic_optimization = False
-        assert (
-            "mel_bins" in ddconfig.keys()
-        ), "mel_bins is not specified in the Autoencoder config"
+        assert "mel_bins" in ddconfig.keys(), (
+            "mel_bins is not specified in the Autoencoder config"
+        )
         num_mel = ddconfig["mel_bins"]
         self.image_key = image_key
         self.sampling_rate = sampling_rate
@@ -53,7 +55,7 @@ class AutoencoderKL(nn.Module):
         self.quant_conv = torch.nn.Conv2d(2 * ddconfig["z_channels"], 2 * embed_dim, 1)
         self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
-        if self.image_key == "fbank":
+        if self.image_key == "fbank" and not skip_vocoder:
             self.vocoder = get_vocoder(None, "cpu", num_mel)
         self.embed_dim = embed_dim
         if colorize_nlabels is not None:
@@ -274,18 +276,15 @@ class AutoencoderKL(nn.Module):
         if self.logger is not None:
             self.logger.experiment.log(
                 {
-                    "original_%s"
-                    % name: wandb.Audio(
+                    "original_%s" % name: wandb.Audio(
                         wav_original, caption="original", sample_rate=self.sampling_rate
                     ),
-                    "reconstruct_%s"
-                    % name: wandb.Audio(
+                    "reconstruct_%s" % name: wandb.Audio(
                         wav_prediction,
                         caption="reconstruct",
                         sample_rate=self.sampling_rate,
                     ),
-                    "samples_%s"
-                    % name: wandb.Audio(
+                    "samples_%s" % name: wandb.Audio(
                         wav_samples, caption="samples", sample_rate=self.sampling_rate
                     ),
                 }

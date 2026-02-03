@@ -168,6 +168,7 @@ def build_model(
 
     # # Use text as condition instead of using waveform during training
     config["model"]["params"]["device"] = device
+    config["model"]["params"]["use_ema"] = False
     # config["model"]["params"]["cond_stage_key"] = "text"
 
     # No normalization here

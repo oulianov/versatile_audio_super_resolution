@@ -116,11 +116,12 @@ class PhonemeEncoder(nn.Module):
 
 
 class VAEFeatureExtract(nn.Module):
-    def __init__(self, first_stage_config):
+    def __init__(self, first_stage_config, vae_instance=None):
         super().__init__()
         # self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
-        self.vae = None
-        self.instantiate_first_stage(first_stage_config)
+        self.vae = vae_instance
+        if self.vae is None:
+            self.instantiate_first_stage(first_stage_config)
         self.device = None
         self.unconditional_cond = None
 

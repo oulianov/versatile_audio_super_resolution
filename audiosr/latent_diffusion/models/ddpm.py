@@ -99,15 +99,15 @@ class DDPM(nn.Module):
         self.first_stage_key = first_stage_key
         self.sampling_rate = sampling_rate
 
-        self.clap = CLAPAudioEmbeddingClassifierFreev2(
-            pretrained_path="",
-            enable_cuda=self.device == "cuda",
-            sampling_rate=self.sampling_rate,
-            embed_mode="audio",
-            amodel="HTSAT-base",
-        )
+        # self.clap = CLAPAudioEmbeddingClassifierFreev2(
+        #     pretrained_path="",
+        #     enable_cuda=self.device == "cuda",
+        #     sampling_rate=self.sampling_rate,
+        #     embed_mode="audio",
+        #     amodel="HTSAT-base",
+        # )
 
-        self.initialize_param_check_toolkit()
+        # self.initialize_param_check_toolkit()
 
         self.latent_t_size = latent_t_size
         self.latent_f_size = latent_f_size
@@ -115,7 +115,7 @@ class DDPM(nn.Module):
         self.channels = channels
         self.use_positional_encodings = use_positional_encodings
         self.model = DiffusionWrapper(unet_config, conditioning_key)
-        count_params(self.model, verbose=True)
+        # count_params(self.model, verbose=True)
         self.use_ema = use_ema
         if self.use_ema:
             self.model_ema = LitEma(self.model)
@@ -161,18 +161,7 @@ class DDPM(nn.Module):
 
         self.label_indices_total = None
         # To avoid the system cannot find metric value for checkpoint
-        self.metrics_buffer = {
-            "val/kullback_leibler_divergence_sigmoid": 15.0,
-            "val/kullback_leibler_divergence_softmax": 10.0,
-            "val/psnr": 0.0,
-            "val/ssim": 0.0,
-            "val/inception_score_mean": 1.0,
-            "val/inception_score_std": 0.0,
-            "val/kernel_inception_distance_mean": 0.0,
-            "val/kernel_inception_distance_std": 0.0,
-            "val/frechet_inception_distance": 133.0,
-            "val/frechet_audio_distance": 32.0,
-        }
+        self.metrics_buffer = {}
         self.initial_learning_rate = None
         self.test_data_subset_path = None
 
@@ -773,7 +762,18 @@ class LatentDiffusion(DDPM):
                 and "device" in config[cond_model_key]["params"]
             ):
                 config[cond_model_key]["params"]["device"] = self.device
-            model = instantiate_from_config(config[cond_model_key])
+
+            # Optimization: prevent double loading of VAE
+            target = config[cond_model_key].get("target", "")
+            if "VAEFeatureExtract" in target and hasattr(self, "first_stage_model"):
+                print("Reusing first_stage_model for VAEFeatureExtract")
+                model = VAEFeatureExtract(
+                    config[cond_model_key].get("params", {}).get("first_stage_config"),
+                    vae_instance=self.first_stage_model,
+                )
+            else:
+                model = instantiate_from_config(config[cond_model_key])
+
             model = model.to(self.device)
             self.cond_stage_models.append(model)
             self.cond_stage_model_metadata[cond_model_key] = {

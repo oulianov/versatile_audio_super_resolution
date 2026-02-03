@@ -173,27 +173,21 @@ def build_model(
     config["model"]["params"]["device"] = device
     config["model"]["params"]["use_ema"] = False
 
+    # Initialize on meta device
+    print("Initializing model structure...")
+    latent_diffusion = LatentDiffusion(**config["model"]["params"])
+
     # Load weights first
     print(f"Loading weights from {ckpt_path}")
     if ckpt_path.endswith(".safetensors"):
         from safetensors.torch import load_file
 
         state_dict = load_file(ckpt_path, device="cpu")
+        latent_diffusion.load_state_dict(state_dict, strict=False)
     else:
         checkpoint = torch.load(ckpt_path, map_location="cpu", mmap=True)
         state_dict = checkpoint["state_dict"]
-
-    # Initialize on meta device
-    print("Initializing model structure...")
-    with torch.device("meta"):
-        latent_diffusion = LatentDiffusion(**config["model"]["params"])
-
-    # Now load state dict normally (tensors are allocated, we copy data into them)
-    print("Loading state dict...")
-    missing, unexpected = latent_diffusion.load_state_dict(
-        state_dict, strict=False, assign=True
-    )
-    print(f"Loaded with {len(missing)} missing, {len(unexpected)} unexpected keys")
+        latent_diffusion.load_state_dict(state_dict, strict=False)
 
     # Move to target device
     latent_diffusion = latent_diffusion.to(device)

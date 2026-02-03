@@ -188,13 +188,11 @@ def build_model(
     with torch.device("meta"):
         latent_diffusion = LatentDiffusion(**config["model"]["params"])
 
-    # Materialize to CPU first (allocate storage), then copy data
-    print("Materializing model...")
-    latent_diffusion = latent_diffusion.to_empty(device="cpu")
-
     # Now load state dict normally (tensors are allocated, we copy data into them)
     print("Loading state dict...")
-    missing, unexpected = latent_diffusion.load_state_dict(state_dict, strict=False)
+    missing, unexpected = latent_diffusion.load_state_dict(
+        state_dict, strict=False, assign=True
+    )
     print(f"Loaded with {len(missing)} missing, {len(unexpected)} unexpected keys")
 
     # Move to target device

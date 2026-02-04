@@ -132,7 +132,7 @@ def make_batch_for_super_resolution(input_file, waveform=None, fbank=None):
     batch["lowpass_mel"] = lowpass_mel
 
     for k in batch.keys():
-        if type(batch[k]) == torch.Tensor:
+        if isinstance(batch[k], torch.Tensor):
             batch[k] = torch.FloatTensor(batch[k]).unsqueeze(0)
 
     return batch, duration
@@ -162,6 +162,8 @@ def build_model(
             device = torch.device("mps")
         else:
             device = torch.device("cpu")
+    elif isinstance(device, str):
+        device = torch.device(device)
 
     print("Loading AudioSR: %s" % model_name)
     print("Loading model on %s" % device)
@@ -202,9 +204,9 @@ def build_model(
     print("Disabling gradient checkpointing...")
     for module in latent_diffusion.modules():
         if hasattr(module, "checkpoint"):
-            module.checkpoint = False
+            setattr(module, "checkpoint", False)
         if hasattr(module, "use_checkpoint"):
-            module.use_checkpoint = False
+            setattr(module, "use_checkpoint", False)
 
     if compile:
         print("Compiling model...")
@@ -559,14 +561,24 @@ def super_resolution_long_audio(
         )
 
         with torch.no_grad():
-            # Use autocast if device is cuda or mps
-            autocast_device = (
-                "cuda"
-                if latent_diffusion.device.type == "cuda"
-                else ("cpu" if latent_diffusion.device.type == "cpu" else None)
-            )
+            # Use autocast if device is cuda or cpu. MPS autocast is limited.
+            # Robustly get the device type
+            try:
+                device_obj = getattr(
+                    latent_diffusion,
+                    "device",
+                    next(latent_diffusion.parameters()).device,
+                )
+                if isinstance(device_obj, str):
+                    device_obj = torch.device(device_obj)
+                autocast_device = (
+                    "cuda"
+                    if device_obj.type == "cuda"
+                    else ("cpu" if device_obj.type == "cpu" else None)
+                )
+            except Exception:
+                autocast_device = None
 
-            # Note: mps doesn't support autocast in the same way as cuda/cpu in some torch versions
             if autocast_device:
                 with torch.autocast(device_type=autocast_device):
                     # Run inference on the single chunk

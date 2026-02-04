@@ -1543,12 +1543,13 @@ class LatentDiffusion(DDPM):
         waveform_lowpass = super().get_input(batch, "waveform_lowpass")
         waveform = self.postprocessing(waveform, waveform_lowpass)
 
-        max_amp = np.max(np.abs(waveform), axis=-1)
-        waveform = 0.5 * waveform / max_amp[..., None]
-        mean_amp = np.mean(waveform, axis=-1)[..., None]
+        # Use torch for normalization to stay on device
+        max_amp = torch.max(torch.abs(waveform), dim=-1).values
+        waveform = 0.5 * waveform / (max_amp[..., None] + 1e-8)
+        mean_amp = torch.mean(waveform, dim=-1)[..., None]
         waveform = waveform - mean_amp
 
-        return waveform
+        return waveform.cpu().numpy()
 
     def _locate_cutoff_freq(self, stft, percentile=0.985):
         def _find_cutoff(x, percentile=0.95):
@@ -1574,10 +1575,15 @@ class LatentDiffusion(DDPM):
 
     def postprocessing(self, out_batch, x_batch):  # x is target
         # Replace the low resolution part with the ground truth
+        if isinstance(out_batch, np.ndarray):
+            out_batch = torch.from_numpy(out_batch)
+        if isinstance(x_batch, np.ndarray):
+            x_batch = torch.from_numpy(x_batch)
+
         device = out_batch.device
         for i in range(out_batch.shape[0]):
             out = out_batch[i, 0]
-            x = x_batch[i, 0]  # x is already a tensor
+            x = x_batch[i, 0]
             cutoffratio = self._get_cutoff_index_torch(x)
 
             length = out.shape[0]

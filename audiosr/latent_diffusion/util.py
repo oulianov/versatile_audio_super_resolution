@@ -1,4 +1,5 @@
 import importlib
+from functools import lru_cache
 import multiprocessing as mp
 from collections import abc
 from inspect import isfunction
@@ -128,7 +129,7 @@ def mean_flat(tensor):
 def count_params(model, verbose=False):
     total_params = sum(p.numel() for p in model.parameters())
     if verbose:
-        print(f"{model.__class__.__name__} has {total_params * 1.e-6:.2f} M params.")
+        print(f"{model.__class__.__name__} has {total_params * 1.0e-6:.2f} M params.")
     return total_params
 
 
@@ -142,11 +143,20 @@ def instantiate_from_config(config):
     return get_obj_from_str(config["target"])(**config.get("params", dict()))
 
 
+@lru_cache(None)
 def get_obj_from_str(string, reload=False):
-    module, cls = string.rsplit(".", 1)
     if reload:
+        module, cls = string.rsplit(".", 1)
         module_imp = importlib.import_module(module)
         importlib.reload(module_imp)
+        return getattr(importlib.import_module(module, package=None), cls)
+    else:
+        return _get_obj_from_str(string)
+
+
+@lru_cache(None)
+def _get_obj_from_str(string):
+    module, cls = string.rsplit(".", 1)
     return getattr(importlib.import_module(module, package=None), cls)
 
 

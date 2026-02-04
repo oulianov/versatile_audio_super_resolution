@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import time
 import wave
+from functools import lru_cache
 from inspect import isfunction
 
 import numpy as np
@@ -376,11 +377,20 @@ def count_params(model, verbose=False):
     return total_params
 
 
+@lru_cache(None)
 def get_obj_from_str(string, reload=False):
-    module, cls = string.rsplit(".", 1)
     if reload:
+        module, cls = string.rsplit(".", 1)
         module_imp = importlib.import_module(module)
         importlib.reload(module_imp)
+        return getattr(importlib.import_module(module, package=None), cls)
+    else:
+        return _get_obj_from_str(string)
+
+
+@lru_cache(None)
+def _get_obj_from_str(string):
+    module, cls = string.rsplit(".", 1)
     return getattr(importlib.import_module(module, package=None), cls)
 
 

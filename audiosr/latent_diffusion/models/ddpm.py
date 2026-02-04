@@ -1574,37 +1574,76 @@ class LatentDiffusion(DDPM):
 
     def postprocessing(self, out_batch, x_batch):  # x is target
         # Replace the low resolution part with the ground truth
+        device = out_batch.device
         for i in range(out_batch.shape[0]):
             out = out_batch[i, 0]
-            x = x_batch[i, 0].cpu().numpy()
-            cutoffratio = self._get_cutoff_index_np(x)
+            x = x_batch[i, 0]  # x is already a tensor
+            cutoffratio = self._get_cutoff_index_torch(x)
 
             length = out.shape[0]
-            stft_gt = librosa.stft(x)
+            # Use torch.stft which is faster and avoids numba JIT
+            # Default n_fft and hop_length in librosa.stft are 2048 and 512
+            n_fft = 2048
+            hop_length = 512
+            window = torch.hann_window(n_fft).to(device)
 
-            stft_out = librosa.stft(out)
-            energy_ratio = np.mean(
-                np.sum(np.abs(stft_gt[cutoffratio]))
-                / np.sum(np.abs(stft_out[cutoffratio, ...]))
+            stft_gt = torch.stft(
+                x,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                return_complex=True,
             )
-            energy_ratio = min(max(energy_ratio, 0.8), 1.2)
+            stft_out = torch.stft(
+                out,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                return_complex=True,
+            )
+
+            energy_ratio = torch.mean(
+                torch.sum(
+                    torch.abs(stft_gt[cutoffratio:])
+                )  # librosa.stft returns [freq, time]
+                / (torch.sum(torch.abs(stft_out[cutoffratio:, ...])) + 1e-8)
+            )
+            energy_ratio = torch.clamp(energy_ratio, 0.8, 1.2)
             stft_out[:cutoffratio, ...] = stft_gt[:cutoffratio, ...] / energy_ratio
 
-            out_renewed = librosa.istft(stft_out, length=length)
+            out_renewed = torch.istft(
+                stft_out,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                length=length,
+            )
             out_batch[i] = out_renewed
         return out_batch
 
-    def _find_cutoff_np(self, x, threshold=0.95):
+    def _find_cutoff_torch(self, x, threshold=0.95):
         threshold = x[-1] * threshold
         for i in range(1, x.shape[0]):
             if x[-i] < threshold:
                 return x.shape[0] - i
         return 0
 
-    def _get_cutoff_index_np(self, x):
-        stft_x = np.abs(librosa.stft(x))
-        energy = np.cumsum(np.sum(stft_x, axis=-1))
-        return self._find_cutoff_np(energy, 0.985)
+    def _get_cutoff_index_torch(self, x):
+        # Use torch for STFT to avoid numba JIT delay
+        n_fft = 2048
+        hop_length = 512
+        window = torch.hann_window(n_fft).to(x.device)
+        stft_x = torch.abs(
+            torch.stft(
+                x,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                return_complex=True,
+            )
+        )
+        energy = torch.cumsum(torch.sum(stft_x, dim=-1), dim=0)
+        return self._find_cutoff_torch(energy, 0.985)
 
 
 class DiffusionWrapper(nn.Module):

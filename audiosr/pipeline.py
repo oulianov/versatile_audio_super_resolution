@@ -194,7 +194,7 @@ def build_model(
     latent_diffusion.eval()
 
     profiler.stop()
-    print(profiler.output_text(unicode=True, color=True))
+    print(profiler.output_text(show_all=True, unicode=True, color=True))
 
     return latent_diffusion
 
@@ -226,7 +226,7 @@ def super_resolution(
         )
 
     profiler.stop()
-    print(profiler.output_text(unicode=True, color=True))
+    print(profiler.output_text(show_all=True, unicode=True, color=True))
 
     return waveform
 
@@ -439,7 +439,7 @@ def super_resolution_batch(
         output_list.append(result)
 
     profiler.stop()
-    print(profiler.output_text(unicode=True, color=True))
+    print(profiler.output_text(show_all=True, unicode=True, color=True))
 
     return output_list
 
@@ -592,6 +592,6 @@ def super_resolution_long_audio(
     final_waveform = torch.clamp(final_waveform, -1.0, 1.0)
 
     profiler.stop()
-    print(profiler.output_text(unicode=True, color=True))
+    print(profiler.output_text(show_all=True, unicode=True, color=True))
 
     return final_waveform.squeeze(0)  # Remove batch dimension before saving

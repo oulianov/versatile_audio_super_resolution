@@ -131,7 +131,7 @@ def checkpoint(func, inputs, params, flag):
                    explicitly take as arguments.
     :param flag: if False, disable gradient checkpointing.
     """
-    if flag:
+    if flag and torch.is_grad_enabled():
         args = tuple(inputs) + tuple(params)
         return CheckpointFunction.apply(func, len(inputs), *args)
     else:
@@ -170,6 +170,9 @@ class CheckpointFunction(torch.autograd.Function):
         return (None, None) + input_grads
 
 
+_timestep_embedding_freqs_cache = {}
+
+
 def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
     """
     Create sinusoidal timestep embeddings.
@@ -181,11 +184,17 @@ def timestep_embedding(timesteps, dim, max_period=10000, repeat_only=False):
     """
     if not repeat_only:
         half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period)
-            * torch.arange(start=0, end=half, dtype=torch.float32)
-            / half
-        ).to(device=timesteps.device)
+        cache_key = (dim, max_period, str(timesteps.device), timesteps.dtype)
+        if cache_key in _timestep_embedding_freqs_cache:
+            freqs = _timestep_embedding_freqs_cache[cache_key]
+        else:
+            freqs = torch.exp(
+                -math.log(max_period)
+                * torch.arange(start=0, end=half, dtype=torch.float32)
+                / half
+            ).to(device=timesteps.device)
+            _timestep_embedding_freqs_cache[cache_key] = freqs
+
         args = timesteps[:, None].float() * freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:

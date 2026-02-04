@@ -143,7 +143,12 @@ def round_up_duration(duration):
 
 
 def build_model(
-    ckpt_path=None, config=None, device=None, model_name="basic", use_safetensors=False
+    ckpt_path=None,
+    config=None,
+    device=None,
+    model_name="basic",
+    use_safetensors=False,
+    compile=False,
 ):
     from pyinstrument import Profiler
 
@@ -185,13 +190,34 @@ def build_model(
         state_dict = load_file(ckpt_path, device="cpu")
         latent_diffusion.load_state_dict(state_dict, strict=False)
     else:
-        checkpoint = torch.load(ckpt_path, map_location="cpu", mmap=True)
-        state_dict = checkpoint["state_dict"]
+        checkpoint_data = torch.load(ckpt_path, map_location="cpu", mmap=True)
+        state_dict = checkpoint_data["state_dict"]
         latent_diffusion.load_state_dict(state_dict, strict=False)
 
     # Move to target device
     latent_diffusion = latent_diffusion.to(device)
     latent_diffusion.eval()
+
+    # Disable checkpointing for inference
+    print("Disabling gradient checkpointing...")
+    for module in latent_diffusion.modules():
+        if hasattr(module, "checkpoint"):
+            module.checkpoint = False
+        if hasattr(module, "use_checkpoint"):
+            module.use_checkpoint = False
+
+    if compile:
+        print("Compiling model...")
+        try:
+            latent_diffusion.model.diffusion_model = torch.compile(
+                latent_diffusion.model.diffusion_model
+            )
+            if hasattr(latent_diffusion.first_stage_model, "vocoder"):
+                latent_diffusion.first_stage_model.vocoder = torch.compile(
+                    latent_diffusion.first_stage_model.vocoder
+                )
+        except Exception as e:
+            print(f"Failed to compile model: {e}")
 
     profiler.stop()
     print(profiler.output_text(show_all=True, unicode=True, color=True))
@@ -533,13 +559,31 @@ def super_resolution_long_audio(
         )
 
         with torch.no_grad():
-            # Run inference on the single chunk
-            processed_chunk = latent_diffusion.generate_batch(
-                batch,
-                unconditional_guidance_scale=guidance_scale,
-                ddim_steps=ddim_steps,
-                duration=duration,
-            )  # This should return a tensor
+            # Use autocast if device is cuda or mps
+            autocast_device = (
+                "cuda"
+                if latent_diffusion.device.type == "cuda"
+                else ("cpu" if latent_diffusion.device.type == "cpu" else None)
+            )
+
+            # Note: mps doesn't support autocast in the same way as cuda/cpu in some torch versions
+            if autocast_device:
+                with torch.autocast(device_type=autocast_device):
+                    # Run inference on the single chunk
+                    processed_chunk = latent_diffusion.generate_batch(
+                        batch,
+                        unconditional_guidance_scale=guidance_scale,
+                        ddim_steps=ddim_steps,
+                        duration=duration,
+                    )
+            else:
+                # Run inference on the single chunk
+                processed_chunk = latent_diffusion.generate_batch(
+                    batch,
+                    unconditional_guidance_scale=guidance_scale,
+                    ddim_steps=ddim_steps,
+                    duration=duration,
+                )
 
         # Ensure the processed chunk is a tensor
         if isinstance(processed_chunk, np.ndarray):
@@ -577,11 +621,8 @@ def super_resolution_long_audio(
             window_contribution.to(overlap_contribution_map.device)
         )
 
-        # Clean up memory
+        # Clean up memory - removed empty_cache/gc as they are slow
         del batch, processed_chunk
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
     # 7. Normalize the overlapping regions
     # Avoid division by zero in non-overlapping parts

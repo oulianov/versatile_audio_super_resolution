@@ -104,9 +104,15 @@ class ResBlock(torch.nn.Module):
 
     def remove_weight_norm(self):
         for l in self.convs1:
-            remove_weight_norm(l)
+            try:
+                torch.nn.utils.remove_weight_norm(l)
+            except ValueError:
+                pass
         for l in self.convs2:
-            remove_weight_norm(l)
+            try:
+                torch.nn.utils.remove_weight_norm(l)
+            except ValueError:
+                pass
 
 
 class Generator(torch.nn.Module):
@@ -167,8 +173,17 @@ class Generator(torch.nn.Module):
     def remove_weight_norm(self):
         # print("Removing weight norm...")
         for l in self.ups:
-            remove_weight_norm(l)
+            try:
+                torch.nn.utils.remove_weight_norm(l)
+            except ValueError:
+                pass
         for l in self.resblocks:
             l.remove_weight_norm()
-        remove_weight_norm(self.conv_pre)
-        remove_weight_norm(self.conv_post)
+        try:
+            torch.nn.utils.remove_weight_norm(self.conv_pre)
+        except ValueError:
+            pass
+        try:
+            torch.nn.utils.remove_weight_norm(self.conv_post)
+        except ValueError:
+            pass

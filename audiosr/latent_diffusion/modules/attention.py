@@ -362,9 +362,9 @@ class CrossAttention(nn.Module):
             mask = repeat(
                 mask, "b j -> b () () j"
             )  # Broadcast to (B, H, L_target, L_source)
-            attn_mask = (mask == 0).to(
-                torch.bool
-            )  # True where we want to mask (0 in original code)
+            attn_mask = (
+                mask == 0
+            ).bool()  # True where we want to mask (0 in original code)
             out = torch.nn.functional.scaled_dot_product_attention(
                 q, k, v, attn_mask=attn_mask, dropout_p=0.0
             )
@@ -404,6 +404,9 @@ class BasicTransformerBlock(nn.Module):
         self.checkpoint = checkpoint
 
     def forward(self, x, context=None, mask=None):
+        if not self.checkpoint or not torch.is_grad_enabled():
+            return self._forward(x, context, mask)
+
         if context is None:
             return checkpoint(self._forward, (x,), self.parameters(), self.checkpoint)
         else:

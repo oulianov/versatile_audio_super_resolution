@@ -34,7 +34,7 @@ def seed_everything(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
 
 
@@ -149,6 +149,7 @@ def build_model(
     model_name="basic",
     use_safetensors=False,
     compile=False,
+    warmup_duration=20.48,
 ):
     from pyinstrument import Profiler
 
@@ -208,18 +209,78 @@ def build_model(
         if hasattr(module, "use_checkpoint"):
             setattr(module, "use_checkpoint", False)
 
+    # Remove weight norm from vocoder for faster inference
+    if hasattr(latent_diffusion, "first_stage_model"):
+        if hasattr(latent_diffusion.first_stage_model, "vocoder"):
+            print("Optimizing vocoder (removing weight norm)...")
+            try:
+                latent_diffusion.first_stage_model.vocoder.remove_weight_norm()
+            except Exception as e:
+                print(f"Failed to remove weight norm from vocoder: {e}")
+
     if compile:
-        print("Compiling model...")
+        import time
+
+        print(
+            f"\n[AudioSR] Starting model compilation (warmup_duration={warmup_duration}s)..."
+        )
+        start_comp = time.perf_counter()
         try:
+            # UNet compilation
+            print("[AudioSR] Compiling UNet...")
             latent_diffusion.model.diffusion_model = torch.compile(
                 latent_diffusion.model.diffusion_model
             )
+
+            # Vocoder compilation
             if hasattr(latent_diffusion.first_stage_model, "vocoder"):
+                print("[AudioSR] Compiling Vocoder...")
                 latent_diffusion.first_stage_model.vocoder = torch.compile(
                     latent_diffusion.first_stage_model.vocoder
                 )
+
+            # Warm-up to trigger compilation NOW instead of during the first request
+            # IMPORTANT: Duration MUST match the actual inference chunks to avoid re-compilation
+            print(
+                f"[AudioSR] Running compilation warm-up for {warmup_duration}s chunk..."
+            )
+            print(
+                "[AudioSR] Note: This will take 2-4 minutes on the very first run (populating cache)."
+            )
+
+            warmup_start = time.perf_counter()
+            with torch.no_grad():
+                # Correctly size the dummy wave for the target duration
+                dummy_wav = np.zeros((int(48000 * warmup_duration)), dtype=np.float32)
+                batch, duration = make_batch_for_super_resolution(
+                    None, waveform=dummy_wav
+                )
+                # Move batch to device
+                for k in batch.keys():
+                    if isinstance(batch[k], torch.Tensor):
+                        batch[k] = batch[k].to(device)
+
+                # Single step is enough to trigger JIT compilation of the UNet and Vocoder
+                print("[AudioSR] Triggering first forward pass (JIT compiling)...")
+                latent_diffusion.generate_batch(
+                    batch,
+                    unconditional_guidance_scale=1.0,
+                    ddim_steps=1,
+                    duration=duration,
+                )
+
+            warmup_end = time.perf_counter()
+            print(
+                f"✓ [AudioSR] Compilation warm-up successful (took {warmup_end - warmup_start:.2f}s)."
+            )
+            print(
+                f"✓ [AudioSR] Total compilation time: {warmup_end - start_comp:.2f}s.\n"
+            )
         except Exception as e:
-            print(f"Failed to compile model: {e}")
+            print(f"✗ [AudioSR] Failed to compile or warm-up model: {e}")
+            import traceback
+
+            traceback.print_exc()
 
     profiler.stop()
     print(profiler.output_text(show_all=True, unicode=True, color=True))

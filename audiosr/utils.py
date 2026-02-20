@@ -79,8 +79,11 @@ def lowpass_filtering_prepare_inference(dl_output):
     ) * 24000
 
     # If the audio is almost empty. Give up processing
+    nyquist = sampling_rate / 2
     if cutoff_freq < 1000:
-        cutoff_freq = 24000
+        cutoff_freq = nyquist - 0.1
+    if cutoff_freq >= nyquist:
+        cutoff_freq = nyquist - 0.1
 
     order = 8
     ftype = np.random.choice(["butter", "cheby1", "ellip", "bessel"])

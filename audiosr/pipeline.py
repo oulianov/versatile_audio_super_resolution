@@ -47,14 +47,17 @@ def lowpass_by_downsampling(
     cutoff_hz: int,
 ) -> torch.Tensor:
     cutoff = int(cutoff_hz)
-    if cutoff <= 0:
-        raise ValueError(f"cutoff_hz must be > 0, got {cutoff_hz!r}")
+    model_lowpass_cutoff = cutoff - 1000
+    if model_lowpass_cutoff <= 0:
+        raise ValueError(
+            f"cutoff_hz must be > 1000 for AudioSR low-pass preprocessing, got {cutoff_hz!r}"
+        )
     if cutoff >= sampling_rate / 2:
         raise ValueError(
             f"cutoff_hz must be below Nyquist ({sampling_rate / 2:g}), got {cutoff:g}"
         )
 
-    lowpass_sampling_rate = cutoff * 2
+    lowpass_sampling_rate = model_lowpass_cutoff * 2
     downsampled = torchaudio.functional.resample(
         waveform,
         orig_freq=sampling_rate,
@@ -674,9 +677,10 @@ def super_resolution_long_audio(
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
     and reconstructing the full audio with cross-fading in overlap regions.
-    With reconstruction_method='original_signal', the model input is first low-passed
-    by downsampling to 2 * frequency_cutoff_hz and resampling back to 48 kHz. The final
-    output then uses the original signal below the cutoff and the generated signal above it.
+    With reconstruction_method='original_signal', the model input is first low-passed by
+    downsampling to 2 * (frequency_cutoff_hz - 1000) and resampling back to 48 kHz. The
+    final output then uses the original signal below the cutoff and the generated signal
+    above it.
     """
 
     seed_everything(int(seed))

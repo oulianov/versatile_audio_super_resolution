@@ -1,6 +1,7 @@
 import gc
 import os
 import re
+from typing import Optional
 
 import numpy as np
 import soundfile as sf
@@ -21,6 +22,8 @@ from audiosr.utils import (
     read_audio_file,
     wav_feature_extraction,
 )
+
+RECONSTRUCTION_METHODS = {"multiband_ensemble", "original_signal"}
 
 
 def seed_everything(seed):
@@ -510,6 +513,119 @@ def super_resolution_batch(
     return output_list
 
 
+def assemble_original_signal_low_band(
+    generated_audio,
+    original_audio,
+    cutoff_hz,
+    sampling_rate=48000,
+    n_fft=2048,
+    hop_length=512,
+):
+    """
+    Keep original low-frequency STFT bins and generated high-frequency bins.
+
+    The cutoff is a hard spectral boundary: bins below cutoff_hz come from the
+    original signal, and bins at/above cutoff_hz come from generated_audio.
+    """
+    try:
+        cutoff = float(cutoff_hz)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Invalid cutoff_hz={cutoff_hz!r}") from exc
+
+    if cutoff <= 0:
+        return generated_audio
+
+    generated = (
+        torch.from_numpy(generated_audio)
+        if isinstance(generated_audio, np.ndarray)
+        else generated_audio
+    )
+    original = (
+        torch.from_numpy(original_audio)
+        if isinstance(original_audio, np.ndarray)
+        else original_audio
+    )
+    if not isinstance(generated, torch.Tensor) or not isinstance(original, torch.Tensor):
+        raise TypeError("generated_audio and original_audio must be torch tensors or numpy arrays")
+
+    input_ndim = generated.ndim
+    if generated.ndim == 1:
+        generated = generated.unsqueeze(0).unsqueeze(0)
+    elif generated.ndim == 2:
+        generated = generated.unsqueeze(0)
+    elif generated.ndim != 3:
+        raise ValueError("generated_audio must have shape [T], [C, T], or [B, C, T]")
+
+    if original.ndim == 1:
+        original = original.unsqueeze(0).unsqueeze(0)
+    elif original.ndim == 2:
+        original = original.unsqueeze(0)
+    elif original.ndim != 3:
+        raise ValueError("original_audio must have shape [T], [C, T], or [B, C, T]")
+
+    length = int(generated.shape[-1])
+    device = generated.device
+    dtype = generated.dtype if generated.is_floating_point() else torch.float32
+    generated = generated.to(device=device, dtype=dtype)
+    original = original.to(device=device, dtype=dtype)
+
+    if original.shape[-1] > length:
+        original = original[..., :length]
+    elif original.shape[-1] < length:
+        original = F.pad(original, (0, length - original.shape[-1]))
+
+    if original.shape[:-1] != generated.shape[:-1]:
+        if original.shape[0] == 1 and generated.shape[0] > 1:
+            original = original.expand(generated.shape[0], -1, -1)
+        if original.shape[1] == 1 and generated.shape[1] > 1:
+            original = original.expand(-1, generated.shape[1], -1)
+        if original.shape[:-1] != generated.shape[:-1]:
+            raise ValueError(
+                "original_audio must match generated_audio batch/channel dimensions"
+            )
+
+    nyquist = sampling_rate / 2
+    if cutoff >= nyquist:
+        assembled = original
+    else:
+        freqs = torch.fft.rfftfreq(n_fft, d=1 / sampling_rate).to(device)
+        low_bins = freqs < cutoff
+        if not bool(low_bins.any()):
+            assembled = generated
+        else:
+            flat_generated = generated.reshape(-1, length)
+            flat_original = original.reshape(-1, length)
+            window = torch.hann_window(n_fft, device=device, dtype=dtype)
+            generated_stft = torch.stft(
+                flat_generated,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                return_complex=True,
+            )
+            original_stft = torch.stft(
+                flat_original,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                return_complex=True,
+            )
+            generated_stft[:, low_bins, :] = original_stft[:, low_bins, :]
+            assembled = torch.istft(
+                generated_stft,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                window=window,
+                length=length,
+            ).reshape_as(generated)
+
+    if input_ndim == 1:
+        return assembled.squeeze(0).squeeze(0)
+    if input_ndim == 2:
+        return assembled.squeeze(0)
+    return assembled
+
+
 def super_resolution_long_audio(
     latent_diffusion,
     input_file,
@@ -518,6 +634,8 @@ def super_resolution_long_audio(
     guidance_scale=3.5,
     chunk_duration_s=15,
     overlap_duration_s=2,
+    reconstruction_method="multiband_ensemble",
+    frequency_cutoff_hz: Optional[int] = None,
 ):
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
@@ -525,6 +643,16 @@ def super_resolution_long_audio(
     """
 
     seed_everything(int(seed))
+
+    if reconstruction_method not in RECONSTRUCTION_METHODS:
+        raise ValueError(
+            f"Unsupported reconstruction_method={reconstruction_method!r}. "
+            f"Supported methods: {sorted(RECONSTRUCTION_METHODS)}"
+        )
+    if reconstruction_method == "original_signal" and frequency_cutoff_hz is None:
+        raise ValueError(
+            "frequency_cutoff_hz is required when reconstruction_method='original_signal'."
+        )
 
     if chunk_duration_s <= overlap_duration_s:
         raise ValueError("Chunk duration must be greater than overlap duration.")
@@ -548,6 +676,7 @@ def super_resolution_long_audio(
     if waveform.shape[0] > 1:
         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
+    original_waveform_48k = waveform.clone()
     waveform = waveform.unsqueeze(0)  # Add a batch dimension
 
     # 2. Define chunk and overlap sizes in samples
@@ -673,6 +802,14 @@ def super_resolution_long_audio(
     # Avoid division by zero in non-overlapping parts
     overlap_contribution_map[overlap_contribution_map == 0] = 1.0
     final_waveform /= overlap_contribution_map
+
+    if reconstruction_method == "original_signal":
+        final_waveform = assemble_original_signal_low_band(
+            final_waveform,
+            original_waveform_48k.unsqueeze(0),
+            frequency_cutoff_hz,
+            sampling_rate=sr,
+        )
 
     # Clamp the final output to avoid clipping
     final_waveform = torch.clamp(final_waveform, -1.0, 1.0)

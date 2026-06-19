@@ -44,20 +44,20 @@ def seed_everything(seed):
 def lowpass_by_downsampling(
     waveform: torch.Tensor,
     sampling_rate: int,
-    cutoff_hz: int,
+    lowpass_sampling_rate_hz: int,
 ) -> torch.Tensor:
-    cutoff = int(cutoff_hz)
-    model_lowpass_cutoff = cutoff - 1000
-    if model_lowpass_cutoff <= 0:
+    lowpass_sampling_rate = int(lowpass_sampling_rate_hz)
+    if lowpass_sampling_rate <= 0:
         raise ValueError(
-            f"cutoff_hz must be > 1000 for AudioSR low-pass preprocessing, got {cutoff_hz!r}"
+            "lowpass_sampling_rate_hz must be > 0 for AudioSR low-pass preprocessing, "
+            f"got {lowpass_sampling_rate_hz!r}"
         )
-    if cutoff >= sampling_rate / 2:
+    if lowpass_sampling_rate >= sampling_rate:
         raise ValueError(
-            f"cutoff_hz must be below Nyquist ({sampling_rate / 2:g}), got {cutoff:g}"
+            "lowpass_sampling_rate_hz must be below the model sampling rate "
+            f"({sampling_rate}), got {lowpass_sampling_rate}"
         )
 
-    lowpass_sampling_rate = model_lowpass_cutoff * 2
     downsampled = torchaudio.functional.resample(
         waveform,
         orig_freq=sampling_rate,
@@ -673,13 +673,14 @@ def super_resolution_long_audio(
     overlap_duration_s=2,
     reconstruction_method="multiband_ensemble",
     frequency_cutoff_hz: Optional[int] = None,
+    input_lowpass_sample_rate_hz: Optional[int] = None,
 ):
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
     and reconstructing the full audio with cross-fading in overlap regions.
     With reconstruction_method='original_signal', the model input is first low-passed by
-    downsampling to 2 * (frequency_cutoff_hz - 1000) and resampling back to 48 kHz. The
-    final output then uses the original signal below the cutoff and the generated signal
+    downsampling to input_lowpass_sample_rate_hz and resampling back to 48 kHz. The final
+    output then uses the original signal below frequency_cutoff_hz and the generated signal
     above it.
     """
 
@@ -693,6 +694,11 @@ def super_resolution_long_audio(
     if reconstruction_method == "original_signal" and frequency_cutoff_hz is None:
         raise ValueError(
             "frequency_cutoff_hz is required when reconstruction_method='original_signal'."
+        )
+    if reconstruction_method == "original_signal" and input_lowpass_sample_rate_hz is None:
+        raise ValueError(
+            "input_lowpass_sample_rate_hz is required when "
+            "reconstruction_method='original_signal'."
         )
 
     if chunk_duration_s <= overlap_duration_s:
@@ -719,7 +725,13 @@ def super_resolution_long_audio(
 
     original_waveform_48k = waveform.clone()
     if reconstruction_method == "original_signal":
-        waveform = lowpass_by_downsampling(waveform, sr, frequency_cutoff_hz)
+        if input_lowpass_sample_rate_hz / 2 >= frequency_cutoff_hz:
+            raise ValueError(
+                "input_lowpass_sample_rate_hz must have Nyquist below "
+                f"frequency_cutoff_hz={frequency_cutoff_hz}, got "
+                f"{input_lowpass_sample_rate_hz}"
+            )
+        waveform = lowpass_by_downsampling(waveform, sr, input_lowpass_sample_rate_hz)
     waveform = waveform.unsqueeze(0)  # Add a batch dimension
 
     # 2. Define chunk and overlap sizes in samples

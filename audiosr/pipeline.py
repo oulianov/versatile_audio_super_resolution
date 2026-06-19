@@ -41,6 +41,38 @@ def seed_everything(seed):
     torch.backends.cudnn.benchmark = True
 
 
+def lowpass_by_downsampling(
+    waveform: torch.Tensor,
+    sampling_rate: int,
+    cutoff_hz: int,
+) -> torch.Tensor:
+    cutoff = int(cutoff_hz)
+    if cutoff <= 0:
+        raise ValueError(f"cutoff_hz must be > 0, got {cutoff_hz!r}")
+    if cutoff >= sampling_rate / 2:
+        raise ValueError(
+            f"cutoff_hz must be below Nyquist ({sampling_rate / 2:g}), got {cutoff:g}"
+        )
+
+    lowpass_sampling_rate = cutoff * 2
+    downsampled = torchaudio.functional.resample(
+        waveform,
+        orig_freq=sampling_rate,
+        new_freq=lowpass_sampling_rate,
+    )
+    filtered = torchaudio.functional.resample(
+        downsampled,
+        orig_freq=lowpass_sampling_rate,
+        new_freq=sampling_rate,
+    )
+
+    if filtered.shape[-1] > waveform.shape[-1]:
+        filtered = filtered[..., : waveform.shape[-1]]
+    elif filtered.shape[-1] < waveform.shape[-1]:
+        filtered = F.pad(filtered, (0, waveform.shape[-1] - filtered.shape[-1]))
+    return filtered
+
+
 def text2phoneme(data):
     return text._clean_text(re.sub(r"<.*?>", "", data), ["english_cleaners2"])
 
@@ -533,7 +565,7 @@ def assemble_original_signal_low_band(
         raise ValueError(f"Invalid cutoff_hz={cutoff_hz!r}") from exc
 
     if cutoff <= 0:
-        return generated_audio
+        raise ValueError(f"cutoff_hz must be > 0, got {cutoff_hz!r}")
 
     generated = (
         torch.from_numpy(generated_audio)
@@ -586,12 +618,14 @@ def assemble_original_signal_low_band(
 
     nyquist = sampling_rate / 2
     if cutoff >= nyquist:
-        assembled = original
+        raise ValueError(
+            f"cutoff_hz must be below Nyquist ({nyquist:g}), got {cutoff:g}"
+        )
     else:
         freqs = torch.fft.rfftfreq(n_fft, d=1 / sampling_rate).to(device)
         low_bins = freqs < cutoff
         if not bool(low_bins.any()):
-            assembled = generated
+            raise ValueError(f"cutoff_hz={cutoff:g} did not select any STFT bins")
         else:
             flat_generated = generated.reshape(-1, length)
             flat_original = original.reshape(-1, length)
@@ -640,6 +674,9 @@ def super_resolution_long_audio(
     """
     Processes a long audio file by chunking it, running super-resolution on each chunk,
     and reconstructing the full audio with cross-fading in overlap regions.
+    With reconstruction_method='original_signal', the model input is first low-passed
+    by downsampling to 2 * frequency_cutoff_hz and resampling back to 48 kHz. The final
+    output then uses the original signal below the cutoff and the generated signal above it.
     """
 
     seed_everything(int(seed))
@@ -677,6 +714,8 @@ def super_resolution_long_audio(
         waveform = torch.mean(waveform, dim=0, keepdim=True)
 
     original_waveform_48k = waveform.clone()
+    if reconstruction_method == "original_signal":
+        waveform = lowpass_by_downsampling(waveform, sr, frequency_cutoff_hz)
     waveform = waveform.unsqueeze(0)  # Add a batch dimension
 
     # 2. Define chunk and overlap sizes in samples

@@ -31,16 +31,13 @@ dependencies = [
     "ftfy",
     "timm",
     "matplotlib",
-    "diffusers",
+    "diffusers>=0.38.0,<0.40.0",
     "pyinstrument>=5.1.2",
 ]
 
 
 [dependency-groups]
 dev = ["ruff>=0.1.0", "ty>=0.0.1"]
-
-[tool.uv.sources]
-diffusers = { git = "https://github.com/huggingface/diffusers.git" }
 
 [project.optional-dependencies]
 dev = ["ruff>=0.1.0", "ty>=0.0.1"]

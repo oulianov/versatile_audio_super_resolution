@@ -1,3 +1,4 @@
+import pytest
 import torch
 
 from audiosr import pipeline
@@ -27,3 +28,20 @@ def test_lowpass_by_downsampling_uses_explicit_sample_rate(
 
     assert filtered.shape == waveform.shape
     assert resample_calls == [(48000, 9000), (9000, 48000)]
+
+
+@pytest.mark.parametrize("length", [356, 1024])
+def test_assemble_original_signal_low_band_handles_short_waveforms(
+    length: int,
+) -> None:
+    waveform = torch.linspace(-0.25, 0.25, length)
+
+    assembled = pipeline.assemble_original_signal_low_band(
+        generated_audio=waveform,
+        original_audio=waveform,
+        cutoff_hz=3000,
+    )
+
+    assert assembled.shape == waveform.shape
+    assert torch.isfinite(assembled).all()
+    torch.testing.assert_close(assembled, waveform, atol=1e-6, rtol=1e-5)

@@ -633,11 +633,18 @@ def assemble_original_signal_low_band(
             flat_generated = generated.reshape(-1, length)
             flat_original = original.reshape(-1, length)
             window = torch.hann_window(n_fft, device=device, dtype=dtype)
+            # torch.stft centers frames by padding n_fft // 2 samples on both
+            # sides. Reflection padding requires that amount to be strictly
+            # smaller than the waveform, which is not true for short selected
+            # spans. Zero-padding preserves the centered STFT semantics for
+            # those spans without manufacturing repeated audio at the edges.
+            pad_mode = "constant" if length <= n_fft // 2 else "reflect"
             generated_stft = torch.stft(
                 flat_generated,
                 n_fft=n_fft,
                 hop_length=hop_length,
                 window=window,
+                pad_mode=pad_mode,
                 return_complex=True,
             )
             original_stft = torch.stft(
@@ -645,6 +652,7 @@ def assemble_original_signal_low_band(
                 n_fft=n_fft,
                 hop_length=hop_length,
                 window=window,
+                pad_mode=pad_mode,
                 return_complex=True,
             )
             generated_stft[:, low_bins, :] = original_stft[:, low_bins, :]

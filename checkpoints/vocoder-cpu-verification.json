@@ -1,0 +1,23 @@
+{
+  "device": "cpu",
+  "torch_version": "2.14.0",
+  "checkpoint": "oulianov/audio-sr/audiosr.safetensors",
+  "vocoder_tensors": 254,
+  "vocoder_bytes": 761127556,
+  "old_constructor_seconds": 2.7618174999952316,
+  "new_constructor_seconds": 2.4133079999592155,
+  "outputs": [
+    {
+      "mel_frames": 1,
+      "audio_samples": 496,
+      "max_absolute_error": 0.0
+    },
+    {
+      "mel_frames": 8,
+      "audio_samples": 3856,
+      "max_absolute_error": 0.0
+    }
+  ],
+  "strict_load": true,
+  "normalization_hooks": 0
+}

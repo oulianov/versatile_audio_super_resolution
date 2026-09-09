@@ -242,15 +242,6 @@ def build_model(
         if hasattr(module, "use_checkpoint"):
             setattr(module, "use_checkpoint", False)
 
-    # Remove weight norm from vocoder for faster inference
-    if hasattr(latent_diffusion, "first_stage_model"):
-        if hasattr(latent_diffusion.first_stage_model, "vocoder"):
-            print("Optimizing vocoder (removing weight norm)...")
-            try:
-                latent_diffusion.first_stage_model.vocoder.remove_weight_norm()
-            except Exception as e:
-                print(f"Failed to remove weight norm from vocoder: {e}")
-
     if compile:
         import time
 

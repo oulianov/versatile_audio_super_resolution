@@ -125,26 +125,24 @@ def get_vocoder(config, device, mel_bins):
         if mel_bins == 64:
             config = get_vocoder_config()
             config = hifigan.AttrDict(config)
-            vocoder = hifigan.Generator_old(config)
+            vocoder = hifigan.Generator_old(config, use_weight_norm=False)
             # print("Load hifigan/g_01080000")
             # ckpt = torch.load(os.path.join(ROOT, "hifigan/g_01080000"))
             # ckpt = torch.load(os.path.join(ROOT, "hifigan/g_00660000"))
             # ckpt = torch_version_orig_mod_remove(ckpt)
             # vocoder.load_state_dict(ckpt["generator"])
             vocoder.eval()
-            vocoder.remove_weight_norm()
             vocoder.to(device)
         else:
             config = get_vocoder_config_48k()
             config = hifigan.AttrDict(config)
-            vocoder = hifigan.Generator_old(config)
+            vocoder = hifigan.Generator_old(config, use_weight_norm=False)
             # print("Load hifigan/g_01080000")
             # ckpt = torch.load(os.path.join(ROOT, "hifigan/g_01080000"))
             # ckpt = torch.load(os.path.join(ROOT, "hifigan/g_00660000"))
             # ckpt = torch_version_orig_mod_remove(ckpt)
             # vocoder.load_state_dict(ckpt["generator"])
             vocoder.eval()
-            vocoder.remove_weight_norm()
             vocoder.to(device)
     return vocoder
 

@@ -13,17 +13,28 @@ def init_weights(m, mean=0.0, std=0.01):
         m.weight.data.normal_(mean, std)
 
 
+def optional_weight_norm(layer: nn.Module, enabled: bool) -> nn.Module:
+    return weight_norm(layer) if enabled else layer
+
+
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
 
 class ResBlock(torch.nn.Module):
-    def __init__(self, h, channels, kernel_size=3, dilation=(1, 3, 5)):
+    def __init__(
+        self,
+        h,
+        channels,
+        kernel_size=3,
+        dilation=(1, 3, 5),
+        use_weight_norm: bool = True,
+    ):
         super(ResBlock, self).__init__()
         self.h = h
         self.convs1 = nn.ModuleList(
             [
-                weight_norm(
+                optional_weight_norm(
                     Conv1d(
                         channels,
                         channels,
@@ -31,9 +42,10 @@ class ResBlock(torch.nn.Module):
                         1,
                         dilation=dilation[0],
                         padding=get_padding(kernel_size, dilation[0]),
-                    )
+                    ),
+                    use_weight_norm,
                 ),
-                weight_norm(
+                optional_weight_norm(
                     Conv1d(
                         channels,
                         channels,
@@ -41,9 +53,10 @@ class ResBlock(torch.nn.Module):
                         1,
                         dilation=dilation[1],
                         padding=get_padding(kernel_size, dilation[1]),
-                    )
+                    ),
+                    use_weight_norm,
                 ),
-                weight_norm(
+                optional_weight_norm(
                     Conv1d(
                         channels,
                         channels,
@@ -51,7 +64,8 @@ class ResBlock(torch.nn.Module):
                         1,
                         dilation=dilation[2],
                         padding=get_padding(kernel_size, dilation[2]),
-                    )
+                    ),
+                    use_weight_norm,
                 ),
             ]
         )
@@ -59,7 +73,7 @@ class ResBlock(torch.nn.Module):
 
         self.convs2 = nn.ModuleList(
             [
-                weight_norm(
+                optional_weight_norm(
                     Conv1d(
                         channels,
                         channels,
@@ -67,9 +81,10 @@ class ResBlock(torch.nn.Module):
                         1,
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
-                    )
+                    ),
+                    use_weight_norm,
                 ),
-                weight_norm(
+                optional_weight_norm(
                     Conv1d(
                         channels,
                         channels,
@@ -77,9 +92,10 @@ class ResBlock(torch.nn.Module):
                         1,
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
-                    )
+                    ),
+                    use_weight_norm,
                 ),
-                weight_norm(
+                optional_weight_norm(
                     Conv1d(
                         channels,
                         channels,
@@ -87,7 +103,8 @@ class ResBlock(torch.nn.Module):
                         1,
                         dilation=1,
                         padding=get_padding(kernel_size, 1),
-                    )
+                    ),
+                    use_weight_norm,
                 ),
             ]
         )
@@ -103,40 +120,42 @@ class ResBlock(torch.nn.Module):
         return x
 
     def remove_weight_norm(self):
-        for l in self.convs1:
+        for layer in self.convs1:
             try:
-                torch.nn.utils.remove_weight_norm(l)
+                torch.nn.utils.remove_weight_norm(layer)
             except ValueError:
                 pass
-        for l in self.convs2:
+        for layer in self.convs2:
             try:
-                torch.nn.utils.remove_weight_norm(l)
+                torch.nn.utils.remove_weight_norm(layer)
             except ValueError:
                 pass
 
 
 class Generator(torch.nn.Module):
-    def __init__(self, h):
+    def __init__(self, h, use_weight_norm: bool = True):
         super(Generator, self).__init__()
         self.h = h
         self.num_kernels = len(h.resblock_kernel_sizes)
         self.num_upsamples = len(h.upsample_rates)
-        self.conv_pre = weight_norm(
-            Conv1d(h.num_mels, h.upsample_initial_channel, 7, 1, padding=3)
+        self.conv_pre = optional_weight_norm(
+            Conv1d(h.num_mels, h.upsample_initial_channel, 7, 1, padding=3),
+            use_weight_norm,
         )
         resblock = ResBlock
 
         self.ups = nn.ModuleList()
         for i, (u, k) in enumerate(zip(h.upsample_rates, h.upsample_kernel_sizes)):
             self.ups.append(
-                weight_norm(
+                optional_weight_norm(
                     ConvTranspose1d(
                         h.upsample_initial_channel // (2**i),
                         h.upsample_initial_channel // (2 ** (i + 1)),
                         k,
                         u,
                         padding=(k - u) // 2,
-                    )
+                    ),
+                    use_weight_norm,
                 )
             )
 
@@ -146,9 +165,13 @@ class Generator(torch.nn.Module):
             for j, (k, d) in enumerate(
                 zip(h.resblock_kernel_sizes, h.resblock_dilation_sizes)
             ):
-                self.resblocks.append(resblock(h, ch, k, d))
+                self.resblocks.append(
+                    resblock(h, ch, k, d, use_weight_norm=use_weight_norm)
+                )
 
-        self.conv_post = weight_norm(Conv1d(ch, 1, 7, 1, padding=3))
+        self.conv_post = optional_weight_norm(
+            Conv1d(ch, 1, 7, 1, padding=3), use_weight_norm
+        )
         self.ups.apply(init_weights)
         self.conv_post.apply(init_weights)
 
@@ -172,13 +195,13 @@ class Generator(torch.nn.Module):
 
     def remove_weight_norm(self):
         # print("Removing weight norm...")
-        for l in self.ups:
+        for layer in self.ups:
             try:
-                torch.nn.utils.remove_weight_norm(l)
+                torch.nn.utils.remove_weight_norm(layer)
             except ValueError:
                 pass
-        for l in self.resblocks:
-            l.remove_weight_norm()
+        for layer in self.resblocks:
+            layer.remove_weight_norm()
         try:
             torch.nn.utils.remove_weight_norm(self.conv_pre)
         except ValueError:

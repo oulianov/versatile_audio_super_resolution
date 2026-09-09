@@ -10,7 +10,6 @@ import torch.nn.functional as F
 import torchaudio
 import yaml
 
-import audiosr.latent_diffusion.modules.phoneme_encoder.text as text
 from audiosr.latent_diffusion.models.ddpm import LatentDiffusion
 from audiosr.latent_diffusion.util import get_vits_phoneme_ids_no_padding
 from audiosr.utils import (
@@ -77,6 +76,8 @@ def lowpass_by_downsampling(
 
 
 def text2phoneme(data):
+    import audiosr.latent_diffusion.modules.phoneme_encoder.text as text
+
     return text._clean_text(re.sub(r"<.*?>", "", data), ["english_cleaners2"])
 
 

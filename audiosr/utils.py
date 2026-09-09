@@ -1,4 +1,3 @@
-from audiosr.latent_diffusion.modules.diffusionmodules.util import checkpoint
 import contextlib
 import importlib
 import json
@@ -16,8 +15,8 @@ import soundfile as sf
 import torch
 import torchaudio
 from huggingface_hub import hf_hub_download, snapshot_download
-from librosa.filters import mel as librosa_mel_fn
 
+from audiosr.latent_diffusion.modules.diffusionmodules.util import checkpoint
 from audiosr.lowpass import lowpass
 
 hann_window = {}
@@ -118,18 +117,20 @@ def mel_spectrogram_train(y):
     mel_fmin = 20
     mel_fmax = 24000
 
-    if 24000 not in mel_basis:
-        mel = librosa_mel_fn(
-            sr=sampling_rate,
-            n_fft=filter_length,
+    cache_key = (y.device, y.dtype)
+    if cache_key not in mel_basis:
+        mel_basis[cache_key] = torchaudio.functional.melscale_fbanks(
+            n_freqs=filter_length // 2 + 1,
             n_mels=n_mel,
-            fmin=mel_fmin,
-            fmax=mel_fmax,
+            sample_rate=sampling_rate,
+            f_min=mel_fmin,
+            f_max=mel_fmax,
+            norm="slaney",
+            mel_scale="slaney",
+        ).T.to(device=y.device, dtype=y.dtype)
+        hann_window[cache_key] = torch.hann_window(
+            win_length, device=y.device, dtype=y.dtype
         )
-        mel_basis[str(mel_fmax) + "_" + str(y.device)] = (
-            torch.from_numpy(mel).float().to(y.device)
-        )
-        hann_window[str(y.device)] = torch.hann_window(win_length).to(y.device)
 
     y = torch.nn.functional.pad(
         y.unsqueeze(1),
@@ -144,7 +145,7 @@ def mel_spectrogram_train(y):
         filter_length,
         hop_length=hop_length,
         win_length=win_length,
-        window=hann_window[str(y.device)],
+        window=hann_window[cache_key],
         center=False,
         pad_mode="reflect",
         normalized=False,
@@ -154,7 +155,7 @@ def mel_spectrogram_train(y):
     stft_spec = torch.abs(stft_spec)
 
     mel = spectral_normalize_torch(
-        torch.matmul(mel_basis[str(mel_fmax) + "_" + str(y.device)], stft_spec)
+        torch.matmul(mel_basis[cache_key], stft_spec)
     )
 
     return mel[0], stft_spec[0]

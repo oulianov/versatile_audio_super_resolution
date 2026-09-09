@@ -1,9 +1,8 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-# from librosa.filters import mel as librosa_mel_fn
-# from librosa.util import pad_center, tiny
-# from scipy.signal import get_window
+import torchaudio
+from scipy.signal import get_window
 
 from audiosr.utilities.audio.audio_processing import (
     dynamic_range_compression,
@@ -38,12 +37,12 @@ class STFT(torch.nn.Module):
         if window is not None:
             assert filter_length >= win_length
             # get window and zero center pad it to filter_length
-            from librosa.util import pad_center
-            from scipy.signal import get_window
-
             fft_window = get_window(window, win_length, fftbins=True)
-            fft_window = pad_center(fft_window, filter_length)
-            fft_window = torch.from_numpy(fft_window).float()
+            left_pad = (filter_length - win_length) // 2
+            fft_window = F.pad(
+                torch.from_numpy(fft_window).float(),
+                (left_pad, filter_length - win_length - left_pad),
+            )
 
             # window the bases
             forward_basis *= fft_window
@@ -105,10 +104,8 @@ class STFT(torch.nn.Module):
                 dtype=np.float32,
             )
             # remove modulation effects
-            from librosa.util import tiny
-
             approx_nonzero_indices = torch.from_numpy(
-                np.where(window_sum > tiny(window_sum))[0]
+                np.where(window_sum > np.finfo(window_sum.dtype).tiny)[0]
             )
             window_sum = torch.autograd.Variable(
                 torch.from_numpy(window_sum), requires_grad=False
@@ -148,16 +145,15 @@ class TacotronSTFT(torch.nn.Module):
         self.sampling_rate = sampling_rate
         self.stft_fn = STFT(filter_length, hop_length, win_length)
 
-        from librosa.filters import mel as librosa_mel_fn
-
-        mel_basis = librosa_mel_fn(
-            sr=sampling_rate,
-            n_fft=filter_length,
+        mel_basis = torchaudio.functional.melscale_fbanks(
+            n_freqs=filter_length // 2 + 1,
             n_mels=n_mel_channels,
-            fmin=mel_fmin,
-            fmax=mel_fmax,
-        )
-        mel_basis = torch.from_numpy(mel_basis).float()
+            sample_rate=sampling_rate,
+            f_min=mel_fmin,
+            f_max=sampling_rate / 2 if mel_fmax is None else mel_fmax,
+            norm="slaney",
+            mel_scale="slaney",
+        ).T
         self.register_buffer("mel_basis", mel_basis)
 
     def spectral_normalize(self, magnitudes, normalize_fun):

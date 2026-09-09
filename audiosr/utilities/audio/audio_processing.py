@@ -1,4 +1,3 @@
-import librosa.util as librosa_util
 import numpy as np
 import torch
 from scipy.signal import get_window
@@ -52,9 +51,21 @@ def window_sumsquare(
     x = np.zeros(n, dtype=dtype)
 
     # Compute the squared window at the desired length
-    win_sq = get_window(window, win_length, fftbins=True)
-    win_sq = librosa_util.normalize(win_sq, norm=norm) ** 2
-    win_sq = librosa_util.pad_center(data=win_sq, size=n_fft)
+    fft_window = torch.from_numpy(get_window(window, win_length, fftbins=True))
+    if norm is not None:
+        if norm not in (np.inf, -np.inf) and norm < 0:
+            raise ValueError(
+                f"Window normalization requires a nonnegative norm or infinity, got {norm}"
+            )
+        length = torch.linalg.vector_norm(fft_window, ord=norm)
+        if length >= torch.finfo(fft_window.dtype).tiny:
+            fft_window = fft_window / length
+    if n_fft < win_length:
+        raise ValueError(f"n_fft ({n_fft}) must be at least win_length ({win_length})")
+    left_pad = (n_fft - win_length) // 2
+    win_sq = torch.nn.functional.pad(
+        fft_window.square(), (left_pad, n_fft - win_length - left_pad)
+    ).numpy()
 
     # Fill the envelope
     for i in range(n_frames):

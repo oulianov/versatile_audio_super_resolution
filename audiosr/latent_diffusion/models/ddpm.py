@@ -3,7 +3,6 @@ from contextlib import contextmanager
 from functools import partial
 from multiprocessing.sharedctypes import Value
 
-import librosa
 import numpy as np
 import soundfile as sf
 import torch

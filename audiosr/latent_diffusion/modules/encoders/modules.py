@@ -5,12 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchaudio
-from transformers import AutoTokenizer, RobertaTokenizer, T5Config, T5EncoderModel
 
-from audiosr.clap.open_clip import create_model
-from audiosr.clap.training.data import get_audio_features
-from audiosr.latent_diffusion.modules.audiomae.AudioMAE import Vanilla_AudioMAE
-from audiosr.latent_diffusion.modules.phoneme_encoder.encoder import TextEncoder
 from audiosr.latent_diffusion.util import instantiate_from_config
 
 """
@@ -47,6 +42,8 @@ class PhonemeEncoder(nn.Module):
         self.PAD_LENGTH = int(pad_length)
         self.pad_token_id = pad_token_id
         self.pad_token_sequence = torch.tensor([self.pad_token_id] * self.PAD_LENGTH)
+
+        from audiosr.latent_diffusion.modules.phoneme_encoder.encoder import TextEncoder
 
         self.text_encoder = TextEncoder(
             n_vocab=vocabs_size,
@@ -161,6 +158,8 @@ class FlanT5HiddenState(nn.Module):
     ):
         super().__init__()
         self.freeze_text_encoder = freeze_text_encoder
+        from transformers import AutoTokenizer, T5Config, T5EncoderModel
+
         self.tokenizer = AutoTokenizer.from_pretrained(text_encoder_name)
         self.model = T5EncoderModel(T5Config.from_pretrained(text_encoder_name))
         if freeze_text_encoder:
@@ -268,6 +267,8 @@ class AudioMAEConditionCTPoolRandTFSeparated(nn.Module):
         self.eval_time_pooling = eval_time_pooling
         self.mask_ratio = mask_ratio
         self.use_reg = regularization
+
+        from audiosr.latent_diffusion.modules.audiomae.AudioMAE import Vanilla_AudioMAE
 
         self.audiomae = Vanilla_AudioMAE()
         self.audiomae.eval()
@@ -395,6 +396,8 @@ class AudioMAEConditionCTPoolRand(nn.Module):
         self.mask_ratio = mask_ratio
         self.use_reg = regularization
 
+        from audiosr.latent_diffusion.modules.audiomae.AudioMAE import Vanilla_AudioMAE
+
         self.audiomae = Vanilla_AudioMAE()
         self.audiomae.eval()
         for p in self.audiomae.parameters():
@@ -511,6 +514,10 @@ class CLAPAudioEmbeddingClassifierFreev2(nn.Module):
         self.sampling_rate = sampling_rate
         self.unconditional_prob = unconditional_prob
         self.random_mute = random_mute
+        from transformers import RobertaTokenizer
+
+        from audiosr.clap.open_clip import create_model
+
         self.tokenize = RobertaTokenizer.from_pretrained("roberta-base")
         self.max_random_mute_portion = max_random_mute_portion
         self.training_mode = training_mode
@@ -598,6 +605,9 @@ class CLAPAudioEmbeddingClassifierFreev2(nn.Module):
         )[0:1]
 
     def forward(self, batch):
+        from audiosr.clap.open_clip import create_model
+        from audiosr.clap.training.data import get_audio_features
+
         # If you want this conditioner to be unconditional, set self.unconditional_prob = 1.0
         # If you want this conditioner to be fully conditional, set self.unconditional_prob = 0.0
         if self.model.training == True and not self.training_mode:

@@ -853,6 +853,11 @@ def super_resolution_long_audio(
         # Clean up memory - removed empty_cache/gc as they are slow
         del batch, processed_chunk
 
+        # A chunk that reaches the end already covers what a further start would
+        # hold, which lies entirely inside this chunk's overlap.
+        if end_sample >= total_samples:
+            break
+
     # 7. Normalize the overlapping regions
     # Avoid division by zero in non-overlapping parts
     overlap_contribution_map[overlap_contribution_map == 0] = 1.0

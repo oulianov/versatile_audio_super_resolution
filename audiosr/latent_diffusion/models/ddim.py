@@ -1,5 +1,7 @@
 """SAMPLING ONLY."""
 
+from typing import Callable, Iterable
+
 import numpy as np
 import torch
 from tqdm.auto import tqdm
@@ -15,6 +17,68 @@ from audiosr.latent_diffusion.modules.diffusionmodules.util import (
 # on Ampere and newer NVIDIA GPUs.
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
+
+
+def timesteps_for_angles(angles: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
+    """Fractional diffusion steps whose noise angle is angles.
+
+    table[t] is the angle atan2(sigma_t, alpha_t) at integer step t and grows
+    with t; steps between two table entries are interpolated linearly.
+    """
+    angles = angles.clamp(table[0], table[-1])
+    upper = torch.searchsorted(table, angles).clamp(1, table.numel() - 1)
+    lower = upper - 1
+    fraction = (angles - table[lower]) / (table[upper] - table[lower])
+    return lower.to(angles.dtype) + fraction
+
+
+def solve_midpoint(
+    velocity: Callable[[torch.Tensor, float], torch.Tensor],
+    state: torch.Tensor,
+    num_steps: int,
+    progress: Callable[[range], Iterable[int]] = iter,
+) -> torch.Tensor:
+    """Integrate d(state)/d(time) = velocity from time 0 to 1 with midpoint steps."""
+    step = 1.0 / num_steps
+    for index in progress(range(num_steps)):
+        time = index * step
+        slope = velocity(state, time)
+        midpoint = state + 0.5 * step * slope
+        state = state + step * velocity(midpoint, time + 0.5 * step)
+    return state
+
+
+def solve_probability_flow(
+    latent_diffusion,
+    guided_v: Callable[[torch.Tensor, float], torch.Tensor],
+    noise: torch.Tensor,
+    num_steps: int,
+    progress: Callable[[range], Iterable[int]] = iter,
+) -> torch.Tensor:
+    """Carry noise to a sample along the probability-flow ODE, with midpoint steps.
+
+    With alpha = cos(angle) and sigma = sin(angle), the noisy latent
+    z = alpha * x0 + sigma * eps moves along dz/d(angle) = v, the model's
+    v-prediction, so the ODE runs on it directly. guided_v(z, timestep) returns
+    the guided v-prediction at a fractional diffusion step.
+    """
+    if latent_diffusion.parameterization != "v":
+        raise ValueError(
+            "The probability-flow sampler expects a v-prediction model, got "
+            f"{latent_diffusion.parameterization!r}."
+        )
+    angles = torch.atan2(
+        latent_diffusion.sqrt_one_minus_alphas_cumprod,
+        latent_diffusion.sqrt_alphas_cumprod,
+    ).to(device=noise.device, dtype=torch.float32)
+    start_angle, angle_span = angles[-1], angles[0] - angles[-1]
+
+    def velocity(state: torch.Tensor, time: float) -> torch.Tensor:
+        angle = (start_angle + time * angle_span).view(1)
+        timestep = float(timesteps_for_angles(angle, angles)[0])
+        return guided_v(state, timestep) * angle_span
+
+    return solve_midpoint(velocity, noise, num_steps, progress)
 
 
 class DDIMSampler(object):
@@ -300,54 +364,9 @@ class DDIMSampler(object):
     ):
         b, *_, device = *x.shape, x.device
 
-        if unconditional_conditioning is None or unconditional_guidance_scale == 1.0:
-            model_output = self.model.apply_model(x, t, c)
-        else:
-            # Batching conditional and unconditional passes
-            x_in = torch.cat([x, x])
-            t_in = torch.cat([t, t])
-
-            # Combine conditioning dictionaries
-            c_in = {}
-            # Assuming c and unconditional_conditioning have the same keys and structure
-            assert isinstance(c, dict) and isinstance(unconditional_conditioning, dict)
-
-            for k in c:
-                if isinstance(c[k], list):
-                    c_in[k] = [
-                        torch.cat([unconditional_conditioning[k][i], c[k][i]])
-                        for i in range(len(c[k]))
-                    ]
-                elif isinstance(c[k], dict):
-                    # Handle nested dicts (e.g. crossattn) if needed, simple concatenation for now
-                    # This might need refinement based on structure, but generally works for tensors
-                    c_in[k] = {}
-                    for sub_k in c[k]:
-                        if isinstance(
-                            c[k][sub_k], (list, tuple)
-                        ):  # List of context, mask
-                            c_in[k][sub_k] = [
-                                torch.cat(
-                                    [
-                                        unconditional_conditioning[k][sub_k][i],
-                                        c[k][sub_k][i],
-                                    ]
-                                )
-                                for i in range(len(c[k][sub_k]))
-                            ]
-                        else:
-                            c_in[k][sub_k] = torch.cat(
-                                [unconditional_conditioning[k][sub_k], c[k][sub_k]]
-                            )
-                else:
-                    c_in[k] = torch.cat([unconditional_conditioning[k], c[k]])
-
-            model_out_batched = self.model.apply_model(x_in, t_in, c_in)
-            model_uncond, model_t = model_out_batched.chunk(2)
-
-            model_output = model_uncond + unconditional_guidance_scale * (
-                model_t - model_uncond
-            )
+        model_output = self.guided_model_output(
+            x, c, t, unconditional_guidance_scale, unconditional_conditioning
+        )
 
         if self.model.parameterization == "v":
             e_t = self.model.predict_eps_from_z_and_v(x, t, model_output)
@@ -402,6 +421,59 @@ class DDIMSampler(object):
             noise = torch.nn.functional.dropout(noise, p=noise_dropout)
         x_prev = a_prev.sqrt() * pred_x0 + dir_xt + noise
         return x_prev, pred_x0
+
+    def guided_model_output(
+        self, x, c, t, unconditional_guidance_scale=1.0, unconditional_conditioning=None
+    ):
+        """The model output at t, with classifier-free guidance when requested."""
+        if unconditional_conditioning is None or unconditional_guidance_scale == 1.0:
+            return self.model.apply_model(x, t, c)
+        else:
+            # Batching conditional and unconditional passes
+            x_in = torch.cat([x, x])
+            t_in = torch.cat([t, t])
+
+            # Combine conditioning dictionaries
+            c_in = {}
+            # Assuming c and unconditional_conditioning have the same keys and structure
+            assert isinstance(c, dict) and isinstance(unconditional_conditioning, dict)
+
+            for k in c:
+                if isinstance(c[k], list):
+                    c_in[k] = [
+                        torch.cat([unconditional_conditioning[k][i], c[k][i]])
+                        for i in range(len(c[k]))
+                    ]
+                elif isinstance(c[k], dict):
+                    # Handle nested dicts (e.g. crossattn) if needed, simple concatenation for now
+                    # This might need refinement based on structure, but generally works for tensors
+                    c_in[k] = {}
+                    for sub_k in c[k]:
+                        if isinstance(
+                            c[k][sub_k], (list, tuple)
+                        ):  # List of context, mask
+                            c_in[k][sub_k] = [
+                                torch.cat(
+                                    [
+                                        unconditional_conditioning[k][sub_k][i],
+                                        c[k][sub_k][i],
+                                    ]
+                                )
+                                for i in range(len(c[k][sub_k]))
+                            ]
+                        else:
+                            c_in[k][sub_k] = torch.cat(
+                                [unconditional_conditioning[k][sub_k], c[k][sub_k]]
+                            )
+                else:
+                    c_in[k] = torch.cat([unconditional_conditioning[k], c[k]])
+
+            model_out_batched = self.model.apply_model(x_in, t_in, c_in)
+            model_uncond, model_t = model_out_batched.chunk(2)
+
+            return model_uncond + unconditional_guidance_scale * (
+                model_t - model_uncond
+            )
 
     @torch.no_grad()
     def encode(

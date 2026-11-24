@@ -11,7 +11,7 @@ from einops import rearrange, repeat
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
-from audiosr.latent_diffusion.models.ddim import DDIMSampler
+from audiosr.latent_diffusion.models.ddim import DDIMSampler, solve_probability_flow
 from audiosr.latent_diffusion.models.plms import PLMSSampler
 from audiosr.latent_diffusion.modules.diffusionmodules.util import (
     extract_into_tensor,
@@ -1415,6 +1415,7 @@ class LatentDiffusion(DDPM):
         unconditional_conditioning=None,
         use_plms=False,
         mask=None,
+        ode_steps=None,
         **kwargs,
     ):
         if mask is not None:
@@ -1423,6 +1424,27 @@ class LatentDiffusion(DDPM):
             shape = (self.channels, self.latent_t_size, self.latent_f_size)
 
         intermediate = None
+        if ode_steps:
+            sampler = DDIMSampler(self, device=self.device)
+
+            def guided_v(z, timestep):
+                steps = torch.full((batch_size,), timestep, device=self.device)
+                return sampler.guided_model_output(
+                    z,
+                    cond,
+                    steps,
+                    unconditional_guidance_scale,
+                    unconditional_conditioning,
+                ).float()
+
+            samples = solve_probability_flow(
+                self,
+                guided_v,
+                torch.randn((batch_size, *shape), device=self.device),
+                ode_steps,
+                progress=lambda steps: tqdm(steps, desc="AudioSR ODE"),
+            )
+            return samples, intermediate
         if ddim and not use_plms:
             ddim_sampler = DDIMSampler(self, device=self.device)
             samples, intermediates = ddim_sampler.sample(
@@ -1474,6 +1496,7 @@ class LatentDiffusion(DDPM):
         unconditional_guidance_scale=1.0,
         unconditional_conditioning=None,
         use_plms=False,
+        ode_steps=None,
         **kwargs,
     ):
         # Generate n_gen times and select the best
@@ -1529,6 +1552,7 @@ class LatentDiffusion(DDPM):
             unconditional_guidance_scale=unconditional_guidance_scale,
             unconditional_conditioning=unconditional_conditioning,
             use_plms=use_plms,
+            ode_steps=ode_steps,
         )
 
         mel = self.decode_first_stage(samples)

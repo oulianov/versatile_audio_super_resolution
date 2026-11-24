@@ -1,7 +1,9 @@
+import contextlib
 import gc
+import math
 import os
 import re
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 import soundfile as sf
@@ -23,6 +25,8 @@ from audiosr.utils import (
 )
 
 RECONSTRUCTION_METHODS = {"multiband_ensemble", "original_signal"}
+LONG_AUDIO_METHODS = ("original", "track_prep")
+MEL_HOP_SAMPLES = 480
 
 
 def seed_everything(seed):
@@ -663,77 +667,21 @@ def assemble_original_signal_low_band(
     return assembled
 
 
-def super_resolution_long_audio(
+def _super_resolve_independent_chunks(
     latent_diffusion,
-    input_file,
-    seed=42,
-    ddim_steps=200,
-    guidance_scale=3.5,
-    chunk_duration_s=15,
-    overlap_duration_s=2,
-    reconstruction_method="multiband_ensemble",
-    frequency_cutoff_hz: Optional[int] = None,
-    input_lowpass_sample_rate_hz: Optional[int] = None,
+    waveform,
+    sr,
+    chunk_duration_s,
+    overlap_duration_s,
+    ddim_steps,
+    guidance_scale,
+    ode_steps=None,
 ):
+    """Super-resolve each chunk on its own and crossfade the overlaps.
+
+    Every chunk is normalized, low-passed and sampled from its own noise, with
+    DDIM or, when ode_steps is set, the probability-flow ODE.
     """
-    Processes a long audio file by chunking it, running super-resolution on each chunk,
-    and reconstructing the full audio with cross-fading in overlap regions.
-    With reconstruction_method='original_signal', the model input is first low-passed by
-    downsampling to input_lowpass_sample_rate_hz and resampling back to 48 kHz. The final
-    output then uses the original signal below frequency_cutoff_hz and the generated signal
-    above it.
-    """
-
-    seed_everything(int(seed))
-
-    if reconstruction_method not in RECONSTRUCTION_METHODS:
-        raise ValueError(
-            f"Unsupported reconstruction_method={reconstruction_method!r}. "
-            f"Supported methods: {sorted(RECONSTRUCTION_METHODS)}"
-        )
-    if reconstruction_method == "original_signal" and frequency_cutoff_hz is None:
-        raise ValueError(
-            "frequency_cutoff_hz is required when reconstruction_method='original_signal'."
-        )
-    if reconstruction_method == "original_signal" and input_lowpass_sample_rate_hz is None:
-        raise ValueError(
-            "input_lowpass_sample_rate_hz is required when "
-            "reconstruction_method='original_signal'."
-        )
-
-    if chunk_duration_s <= overlap_duration_s:
-        raise ValueError("Chunk duration must be greater than overlap duration.")
-
-    # 1. Load the entire audio file once
-    # Use soundfile directly to avoid torchcodec issues in newer torchaudio versions
-    waveform_np, sr = sf.read(input_file, dtype="float32")
-    # soundfile returns (samples, channels), convert to (channels, samples) tensor
-    if waveform_np.ndim == 1:
-        waveform = torch.from_numpy(waveform_np).unsqueeze(0)
-    else:
-        waveform = torch.from_numpy(waveform_np.T)
-
-    # Resample to 48000 Hz
-    if sr != 48000:
-        resampler = torchaudio.transforms.Resample(sr, 48000)
-        waveform = resampler(waveform)
-        sr = 48000
-
-    # Ensure waveform is mono for processing
-    if waveform.shape[0] > 1:
-        waveform = torch.mean(waveform, dim=0, keepdim=True)
-
-    original_waveform_48k = waveform.clone()
-    if reconstruction_method == "original_signal":
-        if input_lowpass_sample_rate_hz / 2 >= frequency_cutoff_hz:
-            raise ValueError(
-                "input_lowpass_sample_rate_hz must have Nyquist below "
-                f"frequency_cutoff_hz={frequency_cutoff_hz}, got "
-                f"{input_lowpass_sample_rate_hz}"
-            )
-        waveform = lowpass_by_downsampling(waveform, sr, input_lowpass_sample_rate_hz)
-    waveform = waveform.unsqueeze(0)  # Add a batch dimension
-
     # 2. Define chunk and overlap sizes in samples
     chunk_samples = int(chunk_duration_s * sr)
     overlap_samples = int(overlap_duration_s * sr)
@@ -804,6 +752,7 @@ def super_resolution_long_audio(
                         unconditional_guidance_scale=guidance_scale,
                         ddim_steps=ddim_steps,
                         duration=duration,
+                        ode_steps=ode_steps,
                     )
             else:
                 # Run inference on the single chunk
@@ -812,6 +761,7 @@ def super_resolution_long_audio(
                     unconditional_guidance_scale=guidance_scale,
                     ddim_steps=ddim_steps,
                     duration=duration,
+                    ode_steps=ode_steps,
                 )
 
         # Ensure the processed chunk is a tensor
@@ -862,6 +812,387 @@ def super_resolution_long_audio(
     # Avoid division by zero in non-overlapping parts
     overlap_contribution_map[overlap_contribution_map == 0] = 1.0
     final_waveform /= overlap_contribution_map
+
+    return final_waveform
+
+
+def window_starts(total_length: int, window_length: int, stride: int) -> List[int]:
+    """Starts of equal windows, stride apart, that cover total_length.
+
+    The last window may run past the end; callers pad to starts[-1] + window_length.
+    """
+    if total_length <= window_length:
+        return [0]
+    count = math.ceil((total_length - window_length) / stride) + 1
+    return [index * stride for index in range(count)]
+
+
+def window_merge_weights(
+    starts: List[int], window_length: int, crossfade: Optional[int] = None
+) -> torch.Tensor:
+    """Per-window weights that crossfade linearly across each overlap.
+
+    With a crossfade shorter than an overlap, the ramp covers the middle
+    crossfade positions of the overlap and each side of it belongs to the
+    nearer window. Each overlap's two weights sum to one, so dividing by the
+    weight sum gives every position a convex combination of its windows.
+    """
+    weights = torch.ones(len(starts), window_length)
+    for index in range(1, len(starts)):
+        overlap = starts[index - 1] + window_length - starts[index]
+        if overlap <= 0:
+            continue
+        ramp = overlap if crossfade is None else max(1, min(crossfade, overlap))
+        lead = (overlap - ramp) // 2
+        rising = torch.ones(overlap)
+        rising[:lead] = 0
+        rising[lead : lead + ramp] = torch.linspace(0, 1, ramp + 2)[1:-1]
+        weights[index, :overlap] *= rising
+        weights[index - 1, window_length - overlap :] *= 1 - rising
+    return weights
+
+
+def overlap_add(
+    windows: torch.Tensor,
+    starts: List[int],
+    weights: torch.Tensor,
+    total_length: int,
+    time_dim: int,
+) -> torch.Tensor:
+    """Merge windows (N, ...) placed at starts along time_dim of each window."""
+    shape = list(windows.shape[1:])
+    shape[time_dim] = total_length
+    merged = windows.new_zeros(shape)
+    norm = windows.new_zeros(total_length)
+    view = [1] * len(shape)
+    view[time_dim] = -1
+    for window, start, weight in zip(windows, starts, weights):
+        length = weight.numel()
+        merged.narrow(time_dim, start, length).add_(window * weight.view(view))
+        norm[start : start + length] += weight
+    return merged / norm.view(view)
+
+
+def track_chunk_starts(
+    total_samples: int, window_samples: int, overlap_samples: int
+) -> List[int]:
+    """Chunk starts that overlap by at least overlap_samples and start on mel
+    frames, so each chunk takes its slice of the track's mel spectrogram.
+
+    The last chunk ends at the end of the track, give or take one mel hop,
+    instead of running into silence.
+    """
+    stride = (window_samples - overlap_samples) // MEL_HOP_SAMPLES * MEL_HOP_SAMPLES
+    starts = window_starts(total_samples, window_samples, stride)
+    if len(starts) > 1:
+        starts[-1] = (
+            -(-(total_samples - window_samples) // MEL_HOP_SAMPLES) * MEL_HOP_SAMPLES
+        )
+    return starts
+
+
+def _autocast_for(latent_diffusion):
+    device = next(latent_diffusion.parameters()).device
+    if device.type == "cuda":
+        return torch.autocast(device_type="cuda")
+    return contextlib.nullcontext()
+
+
+def _prepare_track(latent_diffusion, track, sr, starts, window_samples):
+    """Normalize, low-pass and find the low-band cutoff once for the whole track.
+
+    Returns the low-passed track (zero-padded to cover every window), the
+    cutoff mel bin and each window's slice of the low-passed mel spectrogram,
+    the model's conditioning input.
+    """
+    canvas_samples = starts[-1] + window_samples
+    normalized = np.zeros((1, canvas_samples), dtype=np.float32)
+    normalized[0, : track.shape[-1]] = normalize_wav(track)
+    canvas_mel_frames = canvas_samples // MEL_HOP_SAMPLES
+    _, canvas_stft = wav_feature_extraction(
+        torch.from_numpy(normalized), canvas_mel_frames
+    )
+    lowpassed = (
+        lowpass_filtering_prepare_inference(
+            {
+                "waveform": torch.from_numpy(normalized),
+                "stft": canvas_stft,
+                "sampling_rate": sr,
+            }
+        )["waveform_lowpass"]
+        .numpy()
+        .astype(np.float32)
+    )
+    lowpass_mel, _ = wav_feature_extraction(
+        torch.from_numpy(lowpassed), canvas_mel_frames
+    )
+    cutoff_bin = latent_diffusion._locate_cutoff_freq(torch.exp(lowpass_mel))
+    window_frames = window_samples // MEL_HOP_SAMPLES
+    window_mels = torch.stack(
+        [lowpass_mel[start // MEL_HOP_SAMPLES :][:window_frames] for start in starts]
+    )
+    return lowpassed, cutoff_bin, window_mels
+
+
+def _window_conditioning(latent_diffusion, window_mels, guidance_scale):
+    """The conditioning of LatentDiffusion.get_input for each window's low-passed
+    mel, and the unconditional conditioning when guidance is on.
+
+    Unlike get_input, this does not encode the full-band target, which
+    inference never uses.
+    """
+    inputs = {"lowpass_mel": window_mels.to(latent_diffusion.device)}
+    cond = {}
+    for key, metadata in latent_diffusion.cond_stage_model_metadata.items():
+        if key in cond:
+            continue
+        c = latent_diffusion.get_learned_conditioning(
+            inputs[metadata["cond_stage_key"]], key=key, unconditional_cfg=False
+        )
+        if isinstance(c, dict):
+            cond.update(c)
+        else:
+            cond[key] = c
+    cond = latent_diffusion.filter_useful_cond_dict(cond)
+    uncond = None
+    if guidance_scale != 1.0:
+        uncond = {
+            key: latent_diffusion.cond_stage_models[
+                metadata["model_idx"]
+            ].get_unconditional_condition(len(window_mels))
+            for key, metadata in latent_diffusion.cond_stage_model_metadata.items()
+        }
+    return cond, uncond
+
+
+def _decode_and_merge(
+    latent_diffusion,
+    latents,
+    window_mels,
+    starts,
+    window_samples,
+    crossfade_samples,
+    cutoff_bin,
+    lowpassed,
+    total_samples,
+    original_peak,
+    window_batch_size,
+):
+    """Decode window latents, crossfade them and finish the track once.
+
+    The low mel band below the track's cutoff comes from the low-passed input,
+    the windows crossfade over crossfade_samples, the low band is replaced once
+    over the whole track, and one gain brings the track back to the input peak.
+    """
+    device = next(latent_diffusion.parameters()).device
+    audio_windows = []
+    for low in range(0, len(starts), window_batch_size):
+        high = min(low + window_batch_size, len(starts))
+        with _autocast_for(latent_diffusion):
+            mel = latent_diffusion.decode_first_stage(latents[low:high])
+            low_mels = window_mels[low:high].unsqueeze(1).to(mel)
+            mel[..., :cutoff_bin] = low_mels[..., :cutoff_bin]
+            audio = latent_diffusion.mel_spectrogram_to_waveform(mel, save=False)
+        audio_windows.append(torch.from_numpy(audio).float()[:, 0, :window_samples])
+
+    merged_audio = overlap_add(
+        torch.cat(audio_windows),
+        starts,
+        window_merge_weights(starts, window_samples, crossfade=crossfade_samples),
+        lowpassed.shape[-1],
+        0,
+    )
+    merged_audio = latent_diffusion.postprocessing(
+        merged_audio.view(1, 1, -1).to(device),
+        torch.from_numpy(lowpassed).view(1, 1, -1).to(device),
+    )
+    final_waveform = merged_audio[0, 0, :total_samples].float().cpu()
+    final_waveform = final_waveform - final_waveform.mean()
+    final_waveform = final_waveform / (final_waveform.abs().max() + 1e-8)
+    return (final_waveform * original_peak).view(1, 1, -1)
+
+
+def _super_resolve_track_prepared_chunks(
+    latent_diffusion,
+    waveform,
+    sr,
+    chunk_duration_s,
+    overlap_duration_s,
+    ddim_steps,
+    guidance_scale,
+    window_batch_size,
+    ode_steps=None,
+):
+    """Independent chunks with the track prepared once.
+
+    Each chunk is sampled from its own noise with the model's own sampler (DDIM,
+    or the probability-flow ODE when ode_steps is set), as in "original", but
+    normalization, low-pass, cutoff, low-band replacement and gain are computed
+    once for the whole track, and the last chunk ends at the end of the track
+    instead of running into silence.
+    """
+    track = waveform[0, 0].cpu().numpy()
+    total_samples = track.shape[-1]
+    original_peak = float(np.max(np.abs(track))) + 1e-8
+    window_samples = round(chunk_duration_s * sr)
+    overlap_samples = round(overlap_duration_s * sr)
+    starts = track_chunk_starts(total_samples, window_samples, overlap_samples)
+
+    lowpassed, cutoff_bin, window_mels = _prepare_track(
+        latent_diffusion, track, sr, starts, window_samples
+    )
+    concat_keys = latent_diffusion.model.concat_keys
+    if not concat_keys:
+        raise ValueError("AudioSR conditioning has no concat input to size the latent.")
+    latents = []
+    with torch.no_grad():
+        for low in range(0, len(starts), window_batch_size):
+            mels = window_mels[low : low + window_batch_size]
+            with _autocast_for(latent_diffusion):
+                cond, uncond = _window_conditioning(
+                    latent_diffusion, mels, guidance_scale
+                )
+                latent_diffusion.latent_t_size = cond[concat_keys[0]].shape[-2]
+                samples, _ = latent_diffusion.sample_log(
+                    cond=cond,
+                    batch_size=len(mels),
+                    ddim=True,
+                    ddim_steps=ddim_steps,
+                    eta=1.0,
+                    unconditional_guidance_scale=guidance_scale,
+                    unconditional_conditioning=uncond,
+                    ode_steps=ode_steps,
+                )
+            latents.append(samples.float())
+        return _decode_and_merge(
+            latent_diffusion,
+            torch.cat(latents),
+            window_mels,
+            starts,
+            window_samples,
+            overlap_samples,
+            cutoff_bin,
+            lowpassed,
+            total_samples,
+            original_peak,
+            window_batch_size,
+        )
+
+
+def super_resolution_long_audio(
+    latent_diffusion,
+    input_file,
+    seed=42,
+    ddim_steps=200,
+    guidance_scale=3.5,
+    chunk_duration_s=15,
+    overlap_duration_s=2,
+    reconstruction_method="multiband_ensemble",
+    frequency_cutoff_hz: Optional[int] = None,
+    input_lowpass_sample_rate_hz: Optional[int] = None,
+    long_audio_method: str = "original",
+    ode_steps: Optional[int] = None,
+    window_batch_size: int = 2,
+):
+    """
+    Processes a long audio file in chunks of chunk_duration_s that crossfade
+    over overlap_duration_s. long_audio_method chooses how they are prepared:
+
+    - "original": each chunk is normalized, low-passed and given its low-band
+      cutoff and gain on its own.
+    - "track_prep": normalization, low-pass, cutoff, low-band replacement and
+      gain are computed once for the whole track, the last chunk ends at the
+      end of the track, and window_batch_size chunks go through the model at
+      once.
+
+    Every chunk is sampled from its own noise, with DDIM steps or, when
+    ode_steps is set, that many midpoint steps of the probability-flow ODE
+    (two model evaluations each).
+
+    With reconstruction_method='original_signal', the model input is first low-passed by
+    downsampling to input_lowpass_sample_rate_hz and resampling back to 48 kHz. The final
+    output then uses the original signal below frequency_cutoff_hz and the generated signal
+    above it.
+    """
+
+    seed_everything(int(seed))
+
+    if long_audio_method not in LONG_AUDIO_METHODS:
+        raise ValueError(
+            f"Unsupported long_audio_method={long_audio_method!r}. "
+            f"Supported methods: {list(LONG_AUDIO_METHODS)}"
+        )
+    if reconstruction_method not in RECONSTRUCTION_METHODS:
+        raise ValueError(
+            f"Unsupported reconstruction_method={reconstruction_method!r}. "
+            f"Supported methods: {sorted(RECONSTRUCTION_METHODS)}"
+        )
+    if reconstruction_method == "original_signal" and frequency_cutoff_hz is None:
+        raise ValueError(
+            "frequency_cutoff_hz is required when reconstruction_method='original_signal'."
+        )
+    if reconstruction_method == "original_signal" and input_lowpass_sample_rate_hz is None:
+        raise ValueError(
+            "input_lowpass_sample_rate_hz is required when "
+            "reconstruction_method='original_signal'."
+        )
+
+    if chunk_duration_s <= overlap_duration_s:
+        raise ValueError("Chunk duration must be greater than overlap duration.")
+
+    # 1. Load the entire audio file once
+    # Use soundfile directly to avoid torchcodec issues in newer torchaudio versions
+    waveform_np, sr = sf.read(input_file, dtype="float32")
+    # soundfile returns (samples, channels), convert to (channels, samples) tensor
+    if waveform_np.ndim == 1:
+        waveform = torch.from_numpy(waveform_np).unsqueeze(0)
+    else:
+        waveform = torch.from_numpy(waveform_np.T)
+
+    # Resample to 48000 Hz
+    if sr != 48000:
+        resampler = torchaudio.transforms.Resample(sr, 48000)
+        waveform = resampler(waveform)
+        sr = 48000
+
+    # Ensure waveform is mono for processing
+    if waveform.shape[0] > 1:
+        waveform = torch.mean(waveform, dim=0, keepdim=True)
+
+    original_waveform_48k = waveform.clone()
+    if reconstruction_method == "original_signal":
+        if input_lowpass_sample_rate_hz / 2 >= frequency_cutoff_hz:
+            raise ValueError(
+                "input_lowpass_sample_rate_hz must have Nyquist below "
+                f"frequency_cutoff_hz={frequency_cutoff_hz}, got "
+                f"{input_lowpass_sample_rate_hz}"
+            )
+        waveform = lowpass_by_downsampling(waveform, sr, input_lowpass_sample_rate_hz)
+    waveform = waveform.unsqueeze(0)  # Add a batch dimension
+
+    if long_audio_method == "track_prep":
+        final_waveform = _super_resolve_track_prepared_chunks(
+            latent_diffusion,
+            waveform,
+            sr,
+            chunk_duration_s,
+            overlap_duration_s,
+            ddim_steps,
+            guidance_scale,
+            window_batch_size,
+            ode_steps=ode_steps,
+        )
+    else:
+        final_waveform = _super_resolve_independent_chunks(
+            latent_diffusion,
+            waveform,
+            sr,
+            chunk_duration_s,
+            overlap_duration_s,
+            ddim_steps,
+            guidance_scale,
+            ode_steps=ode_steps,
+        )
 
     if reconstruction_method == "original_signal":
         final_waveform = assemble_original_signal_low_band(

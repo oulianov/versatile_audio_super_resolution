@@ -209,22 +209,11 @@ class AttnBlock(nn.Module):
         k = self.k(h_)
         v = self.v(h_)
 
-        # compute attention
+        # One attention head over all h * w positions, scaled by 1 / sqrt(c).
         b, c, h, w = q.shape
-        q = q.reshape(b, c, h * w).contiguous()
-        q = q.permute(0, 2, 1).contiguous()  # b,hw,c
-        k = k.reshape(b, c, h * w).contiguous()  # b,c,hw
-        w_ = torch.bmm(q, k).contiguous()  # b,hw,hw    w[b,i,j]=sum_c q[b,i,c]k[b,c,j]
-        w_ = w_ * (int(c) ** (-0.5))
-        w_ = torch.nn.functional.softmax(w_, dim=2)
-
-        # attend to values
-        v = v.reshape(b, c, h * w).contiguous()
-        w_ = w_.permute(0, 2, 1).contiguous()  # b,hw,hw (first hw of k, second of q)
-        h_ = torch.bmm(
-            v, w_
-        ).contiguous()  # b, c,hw (hw of q) h_[b,c,j] = sum_i v[b,c,i] w_[b,i,j]
-        h_ = h_.reshape(b, c, h, w).contiguous()
+        q, k, v = (t.reshape(b, 1, c, h * w).transpose(-1, -2) for t in (q, k, v))
+        h_ = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+        h_ = h_.transpose(-1, -2).reshape(b, c, h, w)
 
         h_ = self.proj_out(h_)
 
